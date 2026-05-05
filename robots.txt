@@ -1,0 +1,5 @@
+User-agent: *
+Allow: /
+Disallow: /directory/
+Disallow: /mautic/
+Sitemap: https://sediusocialbucuresti.github.io/obscura/sitemap-index.xml
