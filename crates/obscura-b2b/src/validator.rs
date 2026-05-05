@@ -22,7 +22,12 @@ pub fn validate_profile(
         coverage.push("domain".to_string());
     }
 
-    if profile.description.as_ref().map(|s| s.len() >= 40).unwrap_or(false) {
+    if profile
+        .description
+        .as_ref()
+        .map(|s| s.len() >= 40)
+        .unwrap_or(false)
+    {
         score += 15;
         coverage.push("description".to_string());
     }

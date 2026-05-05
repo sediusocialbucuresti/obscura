@@ -7,7 +7,10 @@ use obscura_b2b::orchestrator::{run_once, PipelineOptions};
 use obscura_b2b::seed::write_example_sources;
 
 #[derive(Parser)]
-#[command(name = "obscura-b2b", about = "B2B data extraction orchestrator built on Obscura")]
+#[command(
+    name = "obscura-b2b",
+    about = "B2B data extraction orchestrator built on Obscura"
+)]
 struct Args {
     #[arg(short, long, global = true)]
     verbose: bool,
@@ -93,29 +96,27 @@ async fn main() -> anyhow::Result<()> {
             include_personal_contacts,
             r#loop,
             interval_seconds,
-        } => {
-            loop {
-                let summary = run_once(PipelineOptions {
-                    seeds_path: seeds.clone(),
-                    output_dir: out.clone(),
-                    concurrency,
-                    max_pages,
-                    timeout_secs: timeout,
-                    delay_ms,
-                    obey_robots,
-                    user_agent: user_agent.clone(),
-                    export_after_run: export,
-                    include_personal_contacts,
-                })
-                .await?;
-                println!("{}", serde_json::to_string_pretty(&summary)?);
+        } => loop {
+            let summary = run_once(PipelineOptions {
+                seeds_path: seeds.clone(),
+                output_dir: out.clone(),
+                concurrency,
+                max_pages,
+                timeout_secs: timeout,
+                delay_ms,
+                obey_robots,
+                user_agent: user_agent.clone(),
+                export_after_run: export,
+                include_personal_contacts,
+            })
+            .await?;
+            println!("{}", serde_json::to_string_pretty(&summary)?);
 
-                if !r#loop {
-                    break;
-                }
-                tokio::time::sleep(Duration::from_secs(interval_seconds)).await;
+            if !r#loop {
+                break;
             }
-        }
+            tokio::time::sleep(Duration::from_secs(interval_seconds)).await;
+        },
         Command::Export {
             out,
             include_personal_contacts,

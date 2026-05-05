@@ -28,7 +28,14 @@ impl StorageLayout {
         let mautic_dir = root.join("mautic");
         let templates_dir = mautic_dir.join("templates");
 
-        for dir in [&root, &raw_pages_dir, &directory_dir, &companies_dir, &mautic_dir, &templates_dir] {
+        for dir in [
+            &root,
+            &raw_pages_dir,
+            &directory_dir,
+            &companies_dir,
+            &mautic_dir,
+            &templates_dir,
+        ] {
             tokio::fs::create_dir_all(dir)
                 .await
                 .with_context(|| format!("failed to create {}", dir.display()))?;
@@ -63,7 +70,9 @@ impl JsonlWriter {
             .open(path.as_ref())
             .await
             .with_context(|| format!("failed to open {}", path.as_ref().display()))?;
-        Ok(Self { file: Mutex::new(file) })
+        Ok(Self {
+            file: Mutex::new(file),
+        })
     }
 
     pub async fn append<T: Serialize>(&self, value: &T) -> anyhow::Result<()> {
@@ -102,7 +111,10 @@ pub async fn read_jsonl<T: DeserializeOwned>(path: impl AsRef<Path>) -> anyhow::
     Ok(out)
 }
 
-pub async fn write_json_pretty<T: Serialize>(path: impl AsRef<Path>, value: &T) -> anyhow::Result<()> {
+pub async fn write_json_pretty<T: Serialize>(
+    path: impl AsRef<Path>,
+    value: &T,
+) -> anyhow::Result<()> {
     if let Some(parent) = path.as_ref().parent() {
         tokio::fs::create_dir_all(parent).await?;
     }
@@ -127,9 +139,10 @@ pub fn now_epoch() -> u64 {
 }
 
 pub fn host_from_url(value: &str) -> Option<String> {
-    Url::parse(value)
-        .ok()
-        .and_then(|url| url.host_str().map(|host| host.trim_start_matches("www.").to_string()))
+    Url::parse(value).ok().and_then(|url| {
+        url.host_str()
+            .map(|host| host.trim_start_matches("www.").to_string())
+    })
 }
 
 pub fn slugify(value: &str) -> String {

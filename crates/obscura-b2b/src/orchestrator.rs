@@ -126,7 +126,8 @@ async fn run_once_local(options: PipelineOptions) -> anyhow::Result<RunSummary> 
                 };
 
                 limiter.wait_turn(&job.url).await;
-                let attempt = process_job(worker_id, &job, &options, &layout, profiles_writer.as_ref()).await;
+                let attempt =
+                    process_job(worker_id, &job, &options, &layout, profiles_writer.as_ref()).await;
                 match attempt {
                     Ok(()) => {
                         stats.completed += 1;
@@ -159,7 +160,8 @@ async fn run_once_local(options: PipelineOptions) -> anyhow::Result<RunSummary> 
     }
 
     if options.export_after_run {
-        summary.profiles_exported = export_outputs(&options.output_dir, options.include_personal_contacts).await?;
+        summary.profiles_exported =
+            export_outputs(&options.output_dir, options.include_personal_contacts).await?;
     }
 
     Ok(summary)
@@ -183,13 +185,14 @@ async fn plan_jobs(
 
         let mut discovered_for_source = 0usize;
         if source_type == "directory" {
-            let discovered = match discover_source_jobs(source, options, layout, max_for_source).await {
-                Ok(jobs) => jobs,
-                Err(error) => {
-                    tracing::warn!("source discovery failed for {}: {}", source.url, error);
-                    Vec::new()
-                }
-            };
+            let discovered =
+                match discover_source_jobs(source, options, layout, max_for_source).await {
+                    Ok(jobs) => jobs,
+                    Err(error) => {
+                        tracing::warn!("source discovery failed for {}: {}", source.url, error);
+                        Vec::new()
+                    }
+                };
             for job in discovered {
                 if jobs.len() >= options.max_pages {
                     break;
@@ -201,7 +204,9 @@ async fn plan_jobs(
             }
         }
 
-        if (source_type != "directory" || discovered_for_source == 0) && seen.insert(source.url.clone()) {
+        if (source_type != "directory" || discovered_for_source == 0)
+            && seen.insert(source.url.clone())
+        {
             jobs.push(source_job(source, &source.url, "company_profile"));
         }
     }
@@ -262,7 +267,10 @@ async fn process_job(
     );
     context.obey_robots = options.obey_robots;
     let context = Arc::new(context);
-    let mut page = Page::new(format!("b2b-page-{}-{}", worker_id, slugify(&job.id)), context);
+    let mut page = Page::new(
+        format!("b2b-page-{}-{}", worker_id, slugify(&job.id)),
+        context,
+    );
 
     tokio::time::timeout(
         Duration::from_secs(options.timeout_secs),
@@ -276,7 +284,11 @@ async fn process_job(
     profile.validation = validate_profile(&profile, options.obey_robots, &job.compliance_basis);
 
     if let Some(html) = page_html(&page) {
-        tokio::fs::write(layout.raw_pages_dir.join(format!("{}.html", profile.id)), html).await?;
+        tokio::fs::write(
+            layout.raw_pages_dir.join(format!("{}.html", profile.id)),
+            html,
+        )
+        .await?;
     }
 
     profiles_writer.append(&profile).await?;

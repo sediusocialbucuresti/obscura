@@ -4,7 +4,9 @@ use std::path::Path;
 use serde::Serialize;
 
 use crate::models::{CompanyProfile, ContactPoint};
-use crate::storage::{csv_escape, read_jsonl, slugify, write_json_pretty, write_text, StorageLayout};
+use crate::storage::{
+    csv_escape, read_jsonl, slugify, write_json_pretty, write_text, StorageLayout,
+};
 
 #[derive(Debug, Clone, Serialize)]
 struct DirectoryIndexEntry {
@@ -42,10 +44,17 @@ struct SegmentSummary {
     by_company_type: BTreeMap<String, Vec<String>>,
 }
 
-pub async fn export_outputs(root: impl AsRef<Path>, include_personal_contacts: bool) -> anyhow::Result<usize> {
+pub async fn export_outputs(
+    root: impl AsRef<Path>,
+    include_personal_contacts: bool,
+) -> anyhow::Result<usize> {
     let layout = StorageLayout::prepare(root).await?;
     let mut profiles: Vec<CompanyProfile> = read_jsonl(&layout.profiles_jsonl).await?;
-    profiles.sort_by(|a, b| a.company_name.to_ascii_lowercase().cmp(&b.company_name.to_ascii_lowercase()));
+    profiles.sort_by(|a, b| {
+        a.company_name
+            .to_ascii_lowercase()
+            .cmp(&b.company_name.to_ascii_lowercase())
+    });
     profiles.dedup_by(|a, b| a.id == b.id);
 
     let mut index = Vec::new();
@@ -83,13 +92,33 @@ pub async fn export_outputs(root: impl AsRef<Path>, include_personal_contacts: b
             country: profile.country.clone(),
             company_type: profile.company_type.clone(),
             industries: profile.industries.clone(),
-            products: profile.products.iter().map(|item| item.name.clone()).collect(),
-            services: profile.services.iter().map(|item| item.name.clone()).collect(),
+            products: profile
+                .products
+                .iter()
+                .map(|item| item.name.clone())
+                .collect(),
+            services: profile
+                .services
+                .iter()
+                .map(|item| item.name.clone())
+                .collect(),
         });
 
-        push_segment(&mut segments.by_region, profile.region.as_deref(), &profile.id);
-        push_segment(&mut segments.by_country, profile.country.as_deref(), &profile.id);
-        push_segment(&mut segments.by_company_type, profile.company_type.as_deref(), &profile.id);
+        push_segment(
+            &mut segments.by_region,
+            profile.region.as_deref(),
+            &profile.id,
+        );
+        push_segment(
+            &mut segments.by_country,
+            profile.country.as_deref(),
+            &profile.id,
+        );
+        push_segment(
+            &mut segments.by_company_type,
+            profile.company_type.as_deref(),
+            &profile.id,
+        );
         for industry in &profile.industries {
             push_segment(&mut segments.by_industry, Some(industry), &profile.id);
         }
@@ -142,7 +171,12 @@ fn mautic_contacts_csv(profiles: &[CompanyProfile], include_personal_contacts: b
 
     let mut seen = BTreeSet::new();
     for profile in profiles {
-        for email in profile.contacts.emails.iter().filter(|email| should_export_email(email, include_personal_contacts)) {
+        for email in profile
+            .contacts
+            .emails
+            .iter()
+            .filter(|email| should_export_email(email, include_personal_contacts))
+        {
             if !seen.insert(email.value.clone()) {
                 continue;
             }
@@ -152,8 +186,16 @@ fn mautic_contacts_csv(profiles: &[CompanyProfile], include_personal_contacts: b
             } else {
                 (String::new(), String::new())
             };
-            let phone = profile.contacts.phones.first().map(|phone| phone.value.as_str()).unwrap_or("");
-            let website = profile.canonical_domain.as_deref().unwrap_or(profile.profile_url.as_str());
+            let phone = profile
+                .contacts
+                .phones
+                .first()
+                .map(|phone| phone.value.as_str())
+                .unwrap_or("");
+            let website = profile
+                .canonical_domain
+                .as_deref()
+                .unwrap_or(profile.profile_url.as_str());
             let industry = profile.industries.join("|");
             let tags = mautic_tags(profile);
             let claim_url = format!("{{{{profile_claim_base_url}}}}/claim/{}", profile.id);
@@ -206,7 +248,11 @@ fn split_email_name(email: &str) -> (String, String) {
 fn title_case(value: &str) -> String {
     let mut chars = value.chars();
     match chars.next() {
-        Some(first) => format!("{}{}", first.to_ascii_uppercase(), chars.as_str().to_ascii_lowercase()),
+        Some(first) => format!(
+            "{}{}",
+            first.to_ascii_uppercase(),
+            chars.as_str().to_ascii_lowercase()
+        ),
         None => String::new(),
     }
 }

@@ -208,24 +208,36 @@ This change does not add Postgres, Redis, or distributed queues yet. The first i
 
 ## Verification Status
 
-Static inspection was performed in this environment.
+Rust tooling and native build dependencies were installed in this environment.
 
-`cargo`, `rustc`, and full Rust verification are not installed in this container, so these commands could not be executed here:
+Toolchain:
+
+```text
+rustc 1.95.0
+cargo 1.95.0
+Ubuntu 24.04
+```
+
+The following checks were executed successfully:
 
 ```bash
 cargo fmt --all -- --check
 cargo test -p obscura-b2b
+cargo clippy --workspace --all-targets -- -D warnings
 cargo test --workspace
-cargo build --release
+cargo build --release --workspace
+./target/release/obscura-b2b init --seeds /tmp/obscura-b2b-seeds.json --out /tmp/obscura-b2b-data
+./target/release/obscura-b2b export --out /tmp/obscura-b2b-empty-export
 ```
 
-These should be run in a Rust-enabled environment before tagging or deploying.
+The release build generated the new `obscura-b2b` binary alongside the existing workspace binaries.
 
 ## Files Added Or Modified
 
 Added:
 
 ```text
+.gitignore
 crates/obscura-b2b/Cargo.toml
 crates/obscura-b2b/src/lib.rs
 crates/obscura-b2b/src/main.rs
@@ -246,4 +258,12 @@ Modified:
 ```text
 Cargo.toml
 Cargo.lock
+crates/obscura-browser/*
+crates/obscura-cdp/*
+crates/obscura-cli/*
+crates/obscura-dom/*
+crates/obscura-js/*
+crates/obscura-net/*
 ```
+
+The non-B2B crate modifications are formatting and lint/build hardening required to make the full workspace pass `cargo fmt --all -- --check` and strict workspace clippy.

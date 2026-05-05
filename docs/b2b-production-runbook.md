@@ -173,8 +173,9 @@ Before each large run:
 
 ```bash
 cargo fmt --all -- --check
-cargo test -p obscura-b2b
-cargo build --release
+cargo clippy --workspace --all-targets -- -D warnings
+cargo test --workspace
+cargo build --release --workspace
 ```
 
 During a run, watch:

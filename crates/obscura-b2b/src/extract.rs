@@ -18,7 +18,10 @@ pub fn extract_company_profile(page: &Page, job: &ScrapeJob) -> CompanyProfile {
 
     let extracted = page.with_dom(|dom| {
         let title = clean(&page.title);
-        let meta_description = meta_content(dom, &["description", "og:description", "twitter:description"]);
+        let meta_description = meta_content(
+            dom,
+            &["description", "og:description", "twitter:description"],
+        );
         let site_name = meta_content(dom, &["og:site_name", "application-name"]);
         let h1 = first_text(dom, "h1");
         let body_text = readable_page_text(dom);
@@ -37,7 +40,10 @@ pub fn extract_company_profile(page: &Page, job: &ScrapeJob) -> CompanyProfile {
         let addresses = extract_addresses(dom, &body_text);
         let products = extract_catalog_items(&links, &body_text, "product");
         let services = extract_catalog_items(&links, &body_text, "service");
-        let company_size = find_line_with_any(&body_text, &["employees", "staff", "workforce", "team size"]);
+        let company_size = find_line_with_any(
+            &body_text,
+            &["employees", "staff", "workforce", "team size"],
+        );
         let revenue = find_line_with_any(&body_text, &["revenue", "turnover", "annual sales"]);
         let personnel = extract_personnel(&body_text, &profile_url);
         let industries = infer_industries(job.industry.as_deref(), &body_text);
@@ -90,13 +96,19 @@ pub fn extract_company_profile(page: &Page, job: &ScrapeJob) -> CompanyProfile {
     }
 
     let id_basis = if extracted.company_name.is_empty() {
-        canonical_domain.clone().unwrap_or_else(|| profile_url.clone())
+        canonical_domain
+            .clone()
+            .unwrap_or_else(|| profile_url.clone())
     } else {
         extracted.company_name.clone()
     };
 
     CompanyProfile {
-        id: slugify(&format!("{} {}", id_basis, canonical_domain.clone().unwrap_or_default())),
+        id: slugify(&format!(
+            "{} {}",
+            id_basis,
+            canonical_domain.clone().unwrap_or_default()
+        )),
         source_name: job.source_name.clone(),
         source_url: job.source_url.clone(),
         profile_url,
@@ -123,7 +135,12 @@ pub fn extract_company_profile(page: &Page, job: &ScrapeJob) -> CompanyProfile {
     }
 }
 
-pub fn discover_company_links(page: &Page, source_url: &str, allowed_domains: &[String], limit: usize) -> Vec<String> {
+pub fn discover_company_links(
+    page: &Page,
+    source_url: &str,
+    allowed_domains: &[String],
+    limit: usize,
+) -> Vec<String> {
     page.with_dom(|dom| {
         let links = collect_links(dom, source_url);
         let mut seen = BTreeSet::new();
@@ -177,7 +194,9 @@ struct ExtractedPage {
 fn meta_content(dom: &DomTree, names: &[&str]) -> Option<String> {
     let wanted: BTreeSet<String> = names.iter().map(|name| name.to_ascii_lowercase()).collect();
     for node_id in dom.query_selector_all("meta").unwrap_or_default() {
-        let Some(node) = dom.get_node(node_id) else { continue };
+        let Some(node) = dom.get_node(node_id) else {
+            continue;
+        };
         let name = node
             .get_attribute("name")
             .or_else(|| node.get_attribute("property"))
@@ -186,7 +205,11 @@ fn meta_content(dom: &DomTree, names: &[&str]) -> Option<String> {
         if !wanted.contains(&name) {
             continue;
         }
-        if let Some(value) = node.get_attribute("content").map(clean).filter(|s| !s.is_empty()) {
+        if let Some(value) = node
+            .get_attribute("content")
+            .map(clean)
+            .filter(|s| !s.is_empty())
+        {
             return Some(value);
         }
     }
@@ -212,7 +235,9 @@ fn readable_page_text(dom: &DomTree) -> String {
 }
 
 fn collect_readable_text(dom: &DomTree, node_id: NodeId, out: &mut String) {
-    let Some(node) = dom.get_node(node_id) else { return };
+    let Some(node) = dom.get_node(node_id) else {
+        return;
+    };
     match &node.data {
         NodeData::Text { contents } => {
             let text = clean(contents);
@@ -230,10 +255,38 @@ fn collect_readable_text(dom: &DomTree, node_id: NodeId, out: &mut String) {
             }
             let block = matches!(
                 tag,
-                "address" | "article" | "aside" | "br" | "dd" | "div" | "dl" | "dt"
-                    | "figcaption" | "footer" | "h1" | "h2" | "h3" | "h4" | "h5" | "h6"
-                    | "header" | "hr" | "li" | "main" | "nav" | "ol" | "p" | "section"
-                    | "table" | "tbody" | "td" | "tfoot" | "th" | "thead" | "tr" | "ul"
+                "address"
+                    | "article"
+                    | "aside"
+                    | "br"
+                    | "dd"
+                    | "div"
+                    | "dl"
+                    | "dt"
+                    | "figcaption"
+                    | "footer"
+                    | "h1"
+                    | "h2"
+                    | "h3"
+                    | "h4"
+                    | "h5"
+                    | "h6"
+                    | "header"
+                    | "hr"
+                    | "li"
+                    | "main"
+                    | "nav"
+                    | "ol"
+                    | "p"
+                    | "section"
+                    | "table"
+                    | "tbody"
+                    | "td"
+                    | "tfoot"
+                    | "th"
+                    | "thead"
+                    | "tr"
+                    | "ul"
             );
             if block && !out.ends_with('\n') {
                 out.push('\n');
@@ -258,8 +311,12 @@ fn collect_links(dom: &DomTree, base_url: &str) -> Vec<(String, String)> {
     let mut out = Vec::new();
 
     for node_id in dom.query_selector_all("a").unwrap_or_default() {
-        let Some(node) = dom.get_node(node_id) else { continue };
-        let Some(href) = node.get_attribute("href") else { continue };
+        let Some(node) = dom.get_node(node_id) else {
+            continue;
+        };
+        let Some(href) = node.get_attribute("href") else {
+            continue;
+        };
         let href = href.trim();
         if href.is_empty() || href.starts_with('#') || href.starts_with("javascript:") {
             continue;
@@ -298,7 +355,12 @@ fn extract_contacts(
 
     for (href, _) in links {
         if let Some(value) = href.strip_prefix("mailto:") {
-            let email = value.split('?').next().unwrap_or("").trim().to_ascii_lowercase();
+            let email = value
+                .split('?')
+                .next()
+                .unwrap_or("")
+                .trim()
+                .to_ascii_lowercase();
             if is_valid_email(&email) && email_seen.insert(email.clone()) {
                 contacts.emails.push(contact_point(email, source_url, 0.95));
             }
@@ -349,7 +411,10 @@ fn extract_contacts(
         }
     }
 
-    for line in body_text.lines().filter(|line| has_any(line, &["tel", "phone", "mobile", "+"])) {
+    for line in body_text
+        .lines()
+        .filter(|line| has_any(line, &["tel", "phone", "mobile", "+"]))
+    {
         for phone in extract_phones_from_line(line) {
             if phone_seen.insert(phone.clone()) {
                 contacts.phones.push(ContactPoint {
@@ -369,7 +434,12 @@ fn extract_contacts(
 fn contact_point(email: String, source_url: &str, confidence: f32) -> ContactPoint {
     let local = email.split('@').next().unwrap_or("");
     ContactPoint {
-        kind: if is_role_email(local) { "role_email" } else { "personal_email" }.to_string(),
+        kind: if is_role_email(local) {
+            "role_email"
+        } else {
+            "personal_email"
+        }
+        .to_string(),
         personal: !is_role_email(local),
         value: email,
         source_url: source_url.to_string(),
@@ -389,7 +459,15 @@ fn extract_addresses(dom: &DomTree, body_text: &str) -> Vec<String> {
     }
 
     for line in body_text.lines().filter(|line| {
-        has_any(line, &["address", "head office", "registered office", "industrial zone"])
+        has_any(
+            line,
+            &[
+                "address",
+                "head office",
+                "registered office",
+                "industrial zone",
+            ],
+        )
     }) {
         let value = clean(line);
         if value.len() > 20 && value.len() < 260 && seen.insert(value.clone()) {
@@ -403,22 +481,48 @@ fn extract_addresses(dom: &DomTree, body_text: &str) -> Vec<String> {
     out
 }
 
-fn extract_catalog_items(links: &[(String, String)], body_text: &str, category: &str) -> Vec<CatalogItem> {
+fn extract_catalog_items(
+    links: &[(String, String)],
+    body_text: &str,
+    category: &str,
+) -> Vec<CatalogItem> {
     let mut seen = BTreeSet::new();
     let mut out = Vec::new();
     let words = if category == "product" {
-        ["product", "catalog", "catalogue", "brand", "range", "collection", "category"]
+        [
+            "product",
+            "catalog",
+            "catalogue",
+            "brand",
+            "range",
+            "collection",
+            "category",
+        ]
     } else {
-        ["service", "solution", "capability", "offering", "logistics", "support", "consulting"]
+        [
+            "service",
+            "solution",
+            "capability",
+            "offering",
+            "logistics",
+            "support",
+            "consulting",
+        ]
     };
 
     for (href, text) in links {
-        let haystack = format!("{} {}", href.to_ascii_lowercase(), text.to_ascii_lowercase());
+        let haystack = format!(
+            "{} {}",
+            href.to_ascii_lowercase(),
+            text.to_ascii_lowercase()
+        );
         if !words.iter().any(|word| haystack.contains(word)) {
             continue;
         }
         let name = if text.is_empty() {
-            href.rsplit('/').find(|part| !part.is_empty()).unwrap_or(category)
+            href.rsplit('/')
+                .find(|part| !part.is_empty())
+                .unwrap_or(category)
         } else {
             text
         };
@@ -554,7 +658,17 @@ fn infer_specializations(body_text: &str) -> Vec<String> {
     let mut out = BTreeSet::new();
     for line in body_text.lines() {
         let lower = line.to_ascii_lowercase();
-        if !has_any(&lower, &["specializ", "expertise", "certified", "iso ", "oem", "private label"]) {
+        if !has_any(
+            &lower,
+            &[
+                "specializ",
+                "expertise",
+                "certified",
+                "iso ",
+                "oem",
+                "private label",
+            ],
+        ) {
             continue;
         }
         let value = clean(line);
@@ -576,18 +690,25 @@ fn find_line_with_any(body_text: &str, needles: &[&str]) -> Option<String> {
 }
 
 fn first_meaningful_line(body_text: &str, max_len: usize) -> Option<String> {
-    body_text
-        .lines()
-        .map(clean)
-        .find(|line| line.len() >= 40 && line.len() <= max_len && !has_any(line, &["cookie", "privacy", "terms"]))
+    body_text.lines().map(clean).find(|line| {
+        line.len() >= 40 && line.len() <= max_len && !has_any(line, &["cookie", "privacy", "terms"])
+    })
 }
 
 fn first_non_empty(values: &[Option<String>]) -> Option<String> {
-    values.iter().flatten().map(|s| clean(s)).find(|s| !s.is_empty())
+    values
+        .iter()
+        .flatten()
+        .map(|s| clean(s))
+        .find(|s| !s.is_empty())
 }
 
 fn is_company_candidate_link(href: &str, text: &str) -> bool {
-    let haystack = format!("{} {}", href.to_ascii_lowercase(), text.to_ascii_lowercase());
+    let haystack = format!(
+        "{} {}",
+        href.to_ascii_lowercase(),
+        text.to_ascii_lowercase()
+    );
     has_any(
         &haystack,
         &[
@@ -615,7 +736,9 @@ fn is_allowed_domain(href: &str, source_url: &str, allowed_domains: &[String]) -
         return false;
     };
     if allowed_domains.is_empty() {
-        return host_from_url(source_url).map(|source_host| source_host == host).unwrap_or(false);
+        return host_from_url(source_url)
+            .map(|source_host| source_host == host)
+            .unwrap_or(false);
     }
     allowed_domains.iter().any(|allowed| {
         let allowed = allowed.trim_start_matches("www.").to_ascii_lowercase();
@@ -675,7 +798,7 @@ fn normalize_phone(value: &str) -> String {
 
 fn is_valid_phone(value: &str) -> bool {
     let digits = value.chars().filter(|ch| ch.is_ascii_digit()).count();
-    digits >= 7 && digits <= 18
+    (7..=18).contains(&digits)
 }
 
 fn is_valid_email(value: &str) -> bool {
@@ -722,7 +845,14 @@ fn is_role_email(local: &str) -> bool {
 fn is_social_link(href: &str) -> bool {
     has_any(
         href,
-        &["linkedin.com", "facebook.com", "instagram.com", "x.com", "twitter.com", "youtube.com"],
+        &[
+            "linkedin.com",
+            "facebook.com",
+            "instagram.com",
+            "x.com",
+            "twitter.com",
+            "youtube.com",
+        ],
     )
 }
 
@@ -742,7 +872,9 @@ fn guess_name_near_title(line: &str, title: &str) -> Option<String> {
 
 fn has_any(value: &str, needles: &[&str]) -> bool {
     let lower = value.to_ascii_lowercase();
-    needles.iter().any(|needle| lower.contains(&needle.to_ascii_lowercase()))
+    needles
+        .iter()
+        .any(|needle| lower.contains(&needle.to_ascii_lowercase()))
 }
 
 fn clean(value: &str) -> String {
@@ -782,7 +914,10 @@ mod tests {
 
     #[test]
     fn extracts_basic_emails() {
-        assert_eq!(extract_emails_from_text("Contact sales@example.com now"), vec!["sales@example.com"]);
+        assert_eq!(
+            extract_emails_from_text("Contact sales@example.com now"),
+            vec!["sales@example.com"]
+        );
     }
 
     #[test]
@@ -794,6 +929,7 @@ mod tests {
 
     #[test]
     fn normalizes_phone_candidates() {
-        assert!(extract_phones_from_line("Tel: +49 (0) 30 1234567").contains(&"+49 (0) 30 1234567".to_string()));
+        assert!(extract_phones_from_line("Tel: +49 (0) 30 1234567")
+            .contains(&"+49 (0) 30 1234567".to_string()));
     }
 }
