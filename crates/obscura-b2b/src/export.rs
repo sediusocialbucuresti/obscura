@@ -43,6 +43,9 @@ struct SegmentSummary {
     by_country: BTreeMap<String, Vec<String>>,
     by_industry: BTreeMap<String, Vec<String>>,
     by_company_type: BTreeMap<String, Vec<String>>,
+    by_source: BTreeMap<String, Vec<String>>,
+    by_status: BTreeMap<String, Vec<String>>,
+    by_source_basis: BTreeMap<String, Vec<String>>,
 }
 
 pub async fn export_outputs(
@@ -66,6 +69,9 @@ pub async fn export_outputs(
         by_country: BTreeMap::new(),
         by_industry: BTreeMap::new(),
         by_company_type: BTreeMap::new(),
+        by_source: BTreeMap::new(),
+        by_status: BTreeMap::new(),
+        by_source_basis: BTreeMap::new(),
     };
 
     for profile in &profiles {
@@ -122,6 +128,28 @@ pub async fn export_outputs(
             profile.company_type.as_deref(),
             &profile.id,
         );
+        push_segment(
+            &mut segments.by_source,
+            Some(&profile.source_name),
+            &profile.id,
+        );
+        push_segment(
+            &mut segments.by_status,
+            Some(&profile.validation.status),
+            &profile.id,
+        );
+        for source_basis in profile
+            .validation
+            .compliance_flags
+            .iter()
+            .filter_map(|flag| flag.strip_prefix("source_basis:"))
+        {
+            push_segment(
+                &mut segments.by_source_basis,
+                Some(source_basis),
+                &profile.id,
+            );
+        }
         for industry in &profile.industries {
             push_segment(&mut segments.by_industry, Some(industry), &profile.id);
         }
@@ -146,69 +174,28 @@ pub async fn export_outputs(
     Ok(profiles.len())
 }
 
+const LIST_PAGE_SIZE: usize = 200;
+const SITEMAP_URL_LIMIT: usize = 50_000;
+
 async fn write_static_site(
     layout: &StorageLayout,
     profiles: &[CompanyProfile],
 ) -> anyhow::Result<()> {
     let site_dir = layout.root.join("site");
     let site_companies_dir = site_dir.join("companies");
+    let sitemap_dir = site_dir.join("sitemaps");
+    let base_url = site_base_url();
     reset_dir(&site_companies_dir).await?;
+    reset_dir(&sitemap_dir).await?;
 
     write_text(site_dir.join("styles.css"), site_css()).await?;
-
-    let mut index = String::new();
-    index.push_str("<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\">");
-    index.push_str("<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">");
-    index.push_str("<title>B2B Company Directory</title>");
-    index.push_str("<link rel=\"stylesheet\" href=\"styles.css\"></head><body>");
-    index.push_str("<header><h1>B2B Company Directory</h1>");
-    let _ = write!(
-        index,
-        "<p>{} public company profiles prepared for review and enrichment.</p>",
-        profiles.len()
-    );
-    index.push_str("<input id=\"search\" type=\"search\" placeholder=\"Search companies, countries, industries\" aria-label=\"Search companies\"></header>");
-    index.push_str("<main><section class=\"grid\" id=\"companies\">");
+    write_text(site_dir.join("robots.txt"), &robots_txt(&base_url)).await?;
+    write_text(site_dir.join("index.html"), &home_html(profiles, &base_url)).await?;
+    write_company_listing_pages(&site_dir, profiles, &base_url).await?;
 
     for profile in profiles {
         let file_stem = safe_file_stem(&profile.id);
-        let href = format!("companies/{}.html", file_stem);
-        let description = profile.description.as_deref().unwrap_or("");
-        let country = profile.country.as_deref().unwrap_or("Unknown country");
-        let company_type = profile.company_type.as_deref().unwrap_or("B2B entity");
-        let industries = if profile.industries.is_empty() {
-            "Unclassified".to_string()
-        } else {
-            profile.industries.join(", ")
-        };
-        let _ = write!(
-            index,
-            "<article class=\"card\" data-search=\"{}\"><a href=\"{}\"><h2>{}</h2></a><p class=\"meta\">{} · {} · {}</p><p>{}</p></article>",
-            html_attr(&format!(
-                "{} {} {} {} {}",
-                profile.company_name,
-                country,
-                company_type,
-                industries,
-                description
-            )),
-            html_attr(&href),
-            html(&profile.company_name),
-            html(country),
-            html(company_type),
-            html(&industries),
-            html(description)
-        );
-    }
-
-    index.push_str("</section></main>");
-    index.push_str(site_search_script());
-    index.push_str("</body></html>");
-    write_text(site_dir.join("index.html"), &index).await?;
-
-    for profile in profiles {
-        let file_stem = safe_file_stem(&profile.id);
-        let page = company_html(profile);
+        let page = company_html(profile, &base_url);
         write_text(
             site_companies_dir.join(format!("{}.html", file_stem)),
             &page,
@@ -216,20 +203,226 @@ async fn write_static_site(
         .await?;
     }
 
+    write_sitemaps(&site_dir, profiles, &base_url).await?;
+
     Ok(())
 }
 
-fn company_html(profile: &CompanyProfile) -> String {
+async fn write_company_listing_pages(
+    site_dir: &Path,
+    profiles: &[CompanyProfile],
+    base_url: &str,
+) -> anyhow::Result<()> {
+    let page_count = listing_page_count(profiles.len());
+    for page_index in 0..page_count {
+        let start = page_index * LIST_PAGE_SIZE;
+        let end = profiles.len().min(start + LIST_PAGE_SIZE);
+        let page = listing_html(
+            &profiles[start..end],
+            page_index,
+            page_count,
+            profiles.len(),
+            base_url,
+        );
+        let path = if page_index == 0 {
+            site_dir.join("companies").join("index.html")
+        } else {
+            site_dir
+                .join("companies")
+                .join(format!("page-{}.html", page_index + 1))
+        };
+        write_text(path, &page).await?;
+    }
+    Ok(())
+}
+
+fn home_html(profiles: &[CompanyProfile], base_url: &str) -> String {
+    let mut by_region = BTreeMap::<String, usize>::new();
+    let mut by_country = BTreeMap::<String, usize>::new();
+    for profile in profiles {
+        *by_region
+            .entry(
+                profile
+                    .region
+                    .clone()
+                    .unwrap_or_else(|| "Unknown".to_string()),
+            )
+            .or_default() += 1;
+        *by_country
+            .entry(
+                profile
+                    .country
+                    .clone()
+                    .unwrap_or_else(|| "Unknown".to_string()),
+            )
+            .or_default() += 1;
+    }
+
     let mut out = String::new();
     out.push_str("<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\">");
     out.push_str("<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">");
-    let _ = write!(out, "<title>{}</title>", html(&profile.company_name));
-    out.push_str("<link rel=\"stylesheet\" href=\"../styles.css\"></head><body>");
-    out.push_str("<header class=\"profile-header\"><a href=\"../index.html\">Directory</a>");
-    let _ = write!(out, "<h1>{}</h1>", html(&profile.company_name));
-    if let Some(description) = &profile.description {
-        let _ = write!(out, "<p>{}</p>", html(description));
+    out.push_str("<title>B2B Company Directory</title>");
+    out.push_str("<meta name=\"description\" content=\"Search public B2B company profiles across Europe and MENA prepared for review and enrichment.\">");
+    let _ = write!(
+        out,
+        "<link rel=\"canonical\" href=\"{}\">",
+        html_attr(base_url)
+    );
+    out.push_str("<link rel=\"stylesheet\" href=\"styles.css\"></head><body>");
+    out.push_str("<header><h1>B2B Company Directory</h1>");
+    let _ = write!(
+        out,
+        "<p>{} public company profiles across Europe and MENA prepared for review and enrichment.</p>",
+        profiles.len()
+    );
+    out.push_str("<nav><a href=\"companies/index.html\">Browse companies</a><a href=\"sitemap-index.xml\">Sitemap</a></nav></header>");
+    out.push_str("<main><section><h2>Directory Coverage</h2><div class=\"stats\">");
+    for (region, count) in by_region {
+        let _ = write!(
+            out,
+            "<div><strong>{}</strong><span>{} profiles</span></div>",
+            html(&region),
+            count
+        );
     }
+    out.push_str("</div></section>");
+    out.push_str("<section><h2>Top Countries</h2><div class=\"chips\">");
+    let mut countries = by_country.into_iter().collect::<Vec<_>>();
+    countries.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
+    for (country, count) in countries.iter().take(40) {
+        let _ = write!(
+            out,
+            "<span>{} <strong>{}</strong></span>",
+            html(country),
+            count
+        );
+    }
+    out.push_str("</div></section></main></body></html>");
+    out
+}
+
+fn listing_html(
+    profiles: &[CompanyProfile],
+    page_index: usize,
+    page_count: usize,
+    total_count: usize,
+    base_url: &str,
+) -> String {
+    let page_number = page_index + 1;
+    let canonical = absolute_site_url(base_url, &listing_page_href(page_index));
+    let mut out = String::new();
+    out.push_str("<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\">");
+    out.push_str("<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">");
+    let _ = write!(
+        out,
+        "<title>B2B Companies - Page {}</title><meta name=\"description\" content=\"Browse page {} of public B2B company profiles across Europe and MENA.\">",
+        page_number, page_number
+    );
+    let _ = write!(
+        out,
+        "<link rel=\"canonical\" href=\"{}\">",
+        html_attr(&canonical)
+    );
+    if page_index > 0 {
+        let prev = absolute_site_url(base_url, &listing_page_href(page_index - 1));
+        let _ = write!(out, "<link rel=\"prev\" href=\"{}\">", html_attr(&prev));
+    }
+    if page_index + 1 < page_count {
+        let next = absolute_site_url(base_url, &listing_page_href(page_index + 1));
+        let _ = write!(out, "<link rel=\"next\" href=\"{}\">", html_attr(&next));
+    }
+    out.push_str("<link rel=\"stylesheet\" href=\"../styles.css\"></head><body>");
+    out.push_str("<header><a href=\"../index.html\">Directory</a>");
+    let _ = write!(
+        out,
+        "<h1>B2B Companies</h1><p>Page {} of {}. {} total profiles.</p>",
+        page_number, page_count, total_count
+    );
+    out.push_str("<input id=\"search\" type=\"search\" placeholder=\"Filter this page\" aria-label=\"Filter this page\"></header>");
+    out.push_str("<main><nav class=\"pager\">");
+    if page_index > 0 {
+        let _ = write!(
+            out,
+            "<a href=\"{}\">Previous</a>",
+            html_attr(&listing_page_local_href(page_index - 1))
+        );
+    }
+    if page_index + 1 < page_count {
+        let _ = write!(
+            out,
+            "<a href=\"{}\">Next</a>",
+            html_attr(&listing_page_local_href(page_index + 1))
+        );
+    }
+    out.push_str("</nav><section class=\"grid\" id=\"companies\">");
+
+    for profile in profiles {
+        push_company_card(
+            &mut out,
+            profile,
+            &format!("{}.html", safe_file_stem(&profile.id)),
+        );
+    }
+
+    out.push_str("</section></main>");
+    out.push_str(site_search_script());
+    out.push_str("</body></html>");
+    out
+}
+
+fn push_company_card(out: &mut String, profile: &CompanyProfile, href: &str) {
+    let description = meta_description(profile);
+    let country = profile.country.as_deref().unwrap_or("Unknown country");
+    let company_type = profile.company_type.as_deref().unwrap_or("B2B entity");
+    let industries = if profile.industries.is_empty() {
+        "Unclassified".to_string()
+    } else {
+        profile.industries.join(", ")
+    };
+    let _ = write!(
+        out,
+        "<article class=\"card\" data-search=\"{}\"><a href=\"{}\"><h2>{}</h2></a><p class=\"meta\">{} · {} · {}</p><p>{}</p></article>",
+        html_attr(&format!(
+            "{} {} {} {} {}",
+            profile.company_name, country, company_type, industries, description
+        )),
+        html_attr(href),
+        html(&profile.company_name),
+        html(country),
+        html(company_type),
+        html(&industries),
+        html(&description)
+    );
+}
+
+fn company_html(profile: &CompanyProfile, base_url: &str) -> String {
+    let canonical = absolute_site_url(
+        base_url,
+        &format!("companies/{}.html", safe_file_stem(&profile.id)),
+    );
+    let description = meta_description(profile);
+    let mut out = String::new();
+    out.push_str("<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\">");
+    out.push_str("<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">");
+    let _ = write!(
+        out,
+        "<title>{}</title><meta name=\"description\" content=\"{}\">",
+        html(&profile.company_name),
+        html_attr(&description)
+    );
+    let _ = write!(
+        out,
+        "<link rel=\"canonical\" href=\"{}\"><meta name=\"robots\" content=\"{}\">",
+        html_attr(&canonical),
+        html_attr(profile_robots(profile))
+    );
+    out.push_str("<script type=\"application/ld+json\">");
+    out.push_str(&organization_json_ld(profile, &canonical));
+    out.push_str("</script>");
+    out.push_str("<link rel=\"stylesheet\" href=\"../styles.css\"></head><body>");
+    out.push_str("<header class=\"profile-header\"><a href=\"index.html\">Companies</a><a href=\"../index.html\">Directory</a>");
+    let _ = write!(out, "<h1>{}</h1>", html(&profile.company_name));
+    let _ = write!(out, "<p>{}</p>", html(&description));
     out.push_str("</header><main class=\"profile\">");
 
     out.push_str("<section><h2>Company</h2><dl>");
@@ -284,6 +477,44 @@ fn company_html(profile: &CompanyProfile) -> String {
     out
 }
 
+async fn write_sitemaps(
+    site_dir: &Path,
+    profiles: &[CompanyProfile],
+    base_url: &str,
+) -> anyhow::Result<()> {
+    let mut urls = Vec::with_capacity(profiles.len() + listing_page_count(profiles.len()) + 1);
+    urls.push(base_url.to_string());
+    for page_index in 0..listing_page_count(profiles.len()) {
+        urls.push(absolute_site_url(base_url, &listing_page_href(page_index)));
+    }
+    for profile in profiles
+        .iter()
+        .filter(|profile| is_indexable_profile(profile))
+    {
+        urls.push(absolute_site_url(
+            base_url,
+            &format!("companies/{}.html", safe_file_stem(&profile.id)),
+        ));
+    }
+
+    let sitemap_dir = site_dir.join("sitemaps");
+    let mut sitemap_files = Vec::new();
+    for (idx, chunk) in urls.chunks(SITEMAP_URL_LIMIT).enumerate() {
+        let filename = format!("sitemap-{:04}.xml", idx + 1);
+        let path = sitemap_dir.join(&filename);
+        write_text(path, &sitemap_xml(chunk)).await?;
+        sitemap_files.push(filename);
+    }
+
+    write_text(
+        site_dir.join("sitemap-index.xml"),
+        &sitemap_index_xml(&sitemap_files, base_url),
+    )
+    .await?;
+
+    Ok(())
+}
+
 fn field(out: &mut String, label: &str, value: Option<&str>) {
     if let Some(value) = value.map(str::trim).filter(|value| !value.is_empty()) {
         let _ = write!(out, "<dt>{}</dt><dd>{}</dd>", html(label), html(value));
@@ -329,6 +560,153 @@ fn catalog_section(out: &mut String, title: &str, items: &[crate::models::Catalo
     out.push_str("</section>");
 }
 
+fn listing_page_count(profile_count: usize) -> usize {
+    profile_count.div_ceil(LIST_PAGE_SIZE).max(1)
+}
+
+fn listing_page_href(page_index: usize) -> String {
+    if page_index == 0 {
+        "companies/index.html".to_string()
+    } else {
+        format!("companies/page-{}.html", page_index + 1)
+    }
+}
+
+fn listing_page_local_href(page_index: usize) -> String {
+    if page_index == 0 {
+        "index.html".to_string()
+    } else {
+        format!("page-{}.html", page_index + 1)
+    }
+}
+
+fn site_base_url() -> String {
+    std::env::var("OBSCURA_B2B_SITE_BASE_URL")
+        .ok()
+        .map(|value| value.trim().trim_end_matches('/').to_string())
+        .filter(|value| !value.is_empty())
+        .unwrap_or_else(|| "http://127.0.0.1:8080".to_string())
+}
+
+fn absolute_site_url(base_url: &str, path: &str) -> String {
+    format!(
+        "{}/{}",
+        base_url.trim_end_matches('/'),
+        path.trim_start_matches('/')
+    )
+}
+
+fn meta_description(profile: &CompanyProfile) -> String {
+    let description = profile.description.as_deref().unwrap_or("").trim();
+    let fallback = format!(
+        "{} B2B company profile{}{}.",
+        profile.company_name,
+        profile
+            .country
+            .as_ref()
+            .map(|country| format!(" in {country}"))
+            .unwrap_or_default(),
+        profile
+            .company_type
+            .as_ref()
+            .map(|company_type| format!(" classified as {company_type}"))
+            .unwrap_or_default()
+    );
+    truncate_text(if description.is_empty() {
+        &fallback
+    } else {
+        description
+    })
+}
+
+fn truncate_text(value: &str) -> String {
+    const MAX_CHARS: usize = 220;
+    let mut out = value.chars().take(MAX_CHARS).collect::<String>();
+    if value.chars().count() > MAX_CHARS {
+        out.push_str("...");
+    }
+    out
+}
+
+fn is_indexable_profile(profile: &CompanyProfile) -> bool {
+    !matches!(
+        profile.validation.status.as_str(),
+        "hold" | "blocked" | "rejected"
+    ) && profile.validation.score >= 40
+}
+
+fn profile_robots(profile: &CompanyProfile) -> &'static str {
+    if is_indexable_profile(profile) {
+        "index,follow"
+    } else {
+        "noindex,nofollow"
+    }
+}
+
+fn organization_json_ld(profile: &CompanyProfile, canonical: &str) -> String {
+    #[derive(Serialize)]
+    struct OrganizationJsonLd<'a> {
+        #[serde(rename = "@context")]
+        context: &'static str,
+        #[serde(rename = "@type")]
+        kind: &'static str,
+        #[serde(rename = "@id")]
+        id: &'a str,
+        name: &'a str,
+        description: String,
+        url: String,
+        #[serde(skip_serializing_if = "Vec::is_empty")]
+        address: Vec<&'a String>,
+        #[serde(skip_serializing_if = "Vec::is_empty")]
+        same_as: Vec<&'a String>,
+    }
+
+    let data = OrganizationJsonLd {
+        context: "https://schema.org",
+        kind: "Organization",
+        id: canonical,
+        name: &profile.company_name,
+        description: meta_description(profile),
+        url: profile
+            .canonical_domain
+            .clone()
+            .unwrap_or_else(|| canonical.to_string()),
+        address: profile.addresses.iter().collect(),
+        same_as: profile.contacts.social_links.iter().collect(),
+    };
+    serde_json::to_string(&data).unwrap_or_else(|_| "{}".to_string())
+}
+
+fn sitemap_xml(urls: &[String]) -> String {
+    let mut out = String::new();
+    out.push_str("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n");
+    out.push_str("<urlset xmlns=\"http://www.sitemaps.org/schemas/sitemap/0.9\">\n");
+    for url in urls {
+        let _ = writeln!(out, "  <url><loc>{}</loc></url>", xml(url));
+    }
+    out.push_str("</urlset>\n");
+    out
+}
+
+fn sitemap_index_xml(files: &[String], base_url: &str) -> String {
+    let mut out = String::new();
+    out.push_str("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n");
+    out.push_str("<sitemapindex xmlns=\"http://www.sitemaps.org/schemas/sitemap/0.9\">\n");
+    for file in files {
+        let url = absolute_site_url(base_url, &format!("sitemaps/{file}"));
+        let _ = writeln!(out, "  <sitemap><loc>{}</loc></sitemap>", xml(&url));
+    }
+    out.push_str("</sitemapindex>\n");
+    out
+}
+
+fn robots_txt(base_url: &str) -> String {
+    format!(
+        "User-agent: *\nAllow: /\nDisallow: /directory/\nDisallow: /mautic/\nSitemap: {}/sitemap-index.xml\n",
+        base_url.trim_end_matches('/')
+    )
+}
+
 fn html(value: &str) -> String {
     value
         .replace('&', "&amp;")
@@ -340,12 +718,16 @@ fn html_attr(value: &str) -> String {
     html(value).replace('"', "&quot;")
 }
 
+fn xml(value: &str) -> String {
+    html_attr(value)
+}
+
 fn site_css() -> &'static str {
-    r#"body{margin:0;font-family:Inter,Arial,sans-serif;background:#f6f7f9;color:#18202a}header{padding:24px 32px;background:#fff;border-bottom:1px solid #d9dde3}h1{margin:0 0 8px;font-size:28px}h2{font-size:18px;margin:0 0 8px}p{line-height:1.45}main{padding:24px 32px}.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:14px}.card,section{background:#fff;border:1px solid #d9dde3;border-radius:8px;padding:16px}.card a{color:#0b5cab;text-decoration:none}.meta{color:#5b6675;font-size:13px}.profile{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:16px}.profile-header a{display:inline-block;margin-bottom:12px;color:#0b5cab}dl{display:grid;grid-template-columns:120px 1fr;gap:8px 12px}dt{font-weight:700;color:#394454}dd{margin:0}input[type=search]{width:100%;max-width:560px;margin-top:12px;padding:10px 12px;border:1px solid #bdc5d1;border-radius:6px;font-size:15px}@media(max-width:700px){header,main{padding:18px}.grid{grid-template-columns:1fr}dl{grid-template-columns:1fr}}"#
+    r#"body{margin:0;font-family:Inter,Arial,sans-serif;background:#f6f7f9;color:#18202a}header{padding:24px 32px;background:#fff;border-bottom:1px solid #d9dde3}h1{margin:0 0 8px;font-size:28px}h2{font-size:18px;margin:0 0 8px}p{line-height:1.45}main{padding:24px 32px}nav{display:flex;flex-wrap:wrap;gap:10px;margin-top:14px}.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:14px}.card,section{background:#fff;border:1px solid #d9dde3;border-radius:8px;padding:16px}.card a,nav a,.profile-header a{color:#0b5cab;text-decoration:none}.meta{color:#5b6675;font-size:13px}.profile{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:16px}.profile-header{display:flex;flex-wrap:wrap;gap:10px;align-items:baseline}.profile-header h1,.profile-header p{flex-basis:100%}dl{display:grid;grid-template-columns:120px 1fr;gap:8px 12px}dt{font-weight:700;color:#394454}dd{margin:0}input[type=search]{width:100%;max-width:560px;margin-top:12px;padding:10px 12px;border:1px solid #bdc5d1;border-radius:6px;font-size:15px}.pager{justify-content:space-between;margin:0 0 18px}.stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px}.stats div{border:1px solid #d9dde3;border-radius:8px;padding:12px}.stats strong{display:block;font-size:24px}.chips{display:flex;flex-wrap:wrap;gap:8px}.chips span{background:#eef1f5;border:1px solid #d9dde3;border-radius:999px;padding:6px 10px}@media(max-width:700px){header,main{padding:18px}.grid{grid-template-columns:1fr}dl{grid-template-columns:1fr}}"#
 }
 
 fn site_search_script() -> &'static str {
-    r#"<script>const s=document.getElementById('search');const cards=[...document.querySelectorAll('.card')];s.addEventListener('input',()=>{const q=s.value.toLowerCase().trim();for(const c of cards){c.style.display=!q||c.dataset.search.toLowerCase().includes(q)?'':'none';}});</script>"#
+    r#"<script>const s=document.getElementById('search');const cards=[...document.querySelectorAll('.card')];if(s){s.addEventListener('input',()=>{const q=s.value.toLowerCase().trim();for(const c of cards){c.style.display=!q||c.dataset.search.toLowerCase().includes(q)?'':'none';}});}</script>"#
 }
 
 async fn reset_dir(path: &Path) -> anyhow::Result<()> {
@@ -415,7 +797,7 @@ fn mautic_contacts_csv(profiles: &[CompanyProfile], include_personal_contacts: b
     out.push_str("email,firstname,lastname,company,phone,website,region,country,industry,company_type,tags,profile_url,claim_url\n");
 
     let mut seen = BTreeSet::new();
-    for profile in profiles {
+    for profile in profiles.iter().filter(|profile| is_campaign_ready(profile)) {
         for email in profile
             .contacts
             .emails
@@ -472,6 +854,15 @@ fn mautic_contacts_csv(profiles: &[CompanyProfile], include_personal_contacts: b
     out
 }
 
+fn is_campaign_ready(profile: &CompanyProfile) -> bool {
+    profile.validation.status == "ready"
+        && !profile
+            .validation
+            .compliance_flags
+            .iter()
+            .any(|flag| flag == "mautic_export_not_campaign_ready")
+}
+
 fn should_export_email(email: &ContactPoint, include_personal_contacts: bool) -> bool {
     !email.personal || include_personal_contacts
 }
@@ -514,6 +905,8 @@ fn mautic_tags(profile: &CompanyProfile) -> String {
     if let Some(company_type) = &profile.company_type {
         tags.insert(format!("type:{}", slugify(company_type)));
     }
+    tags.insert(format!("status:{}", slugify(&profile.validation.status)));
+    tags.insert(format!("source:{}", slugify(&profile.source_name)));
     for industry in &profile.industries {
         tags.insert(format!("industry:{}", slugify(industry)));
     }
