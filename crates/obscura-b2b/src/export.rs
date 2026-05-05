@@ -62,11 +62,7 @@ pub async fn export_outputs(
         latest_by_id.insert(profile.id.clone(), profile);
     }
     let mut profiles = latest_by_id.into_values().collect::<Vec<_>>();
-    profiles.sort_by(|a, b| {
-        a.company_name
-            .to_ascii_lowercase()
-            .cmp(&b.company_name.to_ascii_lowercase())
-    });
+    profiles.sort_by_key(profile_sort_key);
     reset_dir(&layout.companies_dir).await?;
 
     let mut index = Vec::new();
@@ -249,7 +245,15 @@ async fn write_company_listing_pages(
 fn home_html(profiles: &[CompanyProfile], base_url: &str) -> String {
     let mut by_region = BTreeMap::<String, usize>::new();
     let mut by_country = BTreeMap::<String, usize>::new();
+    let mut lei_count = 0usize;
+    let mut contact_count = 0usize;
     for profile in profiles {
+        if evidence_value(profile, "lei").is_some() {
+            lei_count += 1;
+        }
+        if has_public_contact(profile) {
+            contact_count += 1;
+        }
         *by_region
             .entry(
                 profile
@@ -271,32 +275,62 @@ fn home_html(profiles: &[CompanyProfile], base_url: &str) -> String {
     let mut out = String::new();
     out.push_str("<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\">");
     out.push_str("<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">");
-    out.push_str("<title>B2B Company Directory</title>");
-    out.push_str("<meta name=\"description\" content=\"Search public B2B company profiles across Europe and MENA prepared for review and enrichment.\">");
+    out.push_str("<title>SaharaIndex B2B Company Directory</title>");
+    out.push_str("<meta name=\"description\" content=\"Search verified B2B company profiles, legal identifiers, countries, activities, and buyer RFQ routes on SaharaIndex.\">");
     let _ = write!(
         out,
         "<link rel=\"canonical\" href=\"{}\">",
         html_attr(base_url)
     );
     out.push_str("<link rel=\"stylesheet\" href=\"styles.css\"></head><body>");
-    out.push_str("<header><h1>B2B Company Directory</h1>");
+    out.push_str("<header class=\"site-header\"><nav class=\"topbar\"><a class=\"brand\" href=\"index.html\">SaharaIndex</a><a href=\"companies/index.html\">Companies</a><a href=\"sitemap-index.xml\">Sitemap</a></nav><div class=\"hero\">");
+    out.push_str(
+        "<p class=\"eyebrow\">Verified supplier discovery</p><h1>B2B Company Directory</h1>",
+    );
     let _ = write!(
         out,
-        "<p>{} public company profiles across Europe and MENA prepared for review and enrichment.</p>",
-        profiles.len()
+        "<p class=\"lead\">Search {} company profiles across Europe and MENA. Each profile keeps registry evidence separate from commercial contact enrichment and gives buyers a direct RFQ route through SaharaIndex.</p>",
+        format_count(profiles.len())
     );
-    out.push_str("<nav><a href=\"companies/index.html\">Browse companies</a><a href=\"sitemap-index.xml\">Sitemap</a></nav></header>");
-    out.push_str("<main><section><h2>Directory Coverage</h2><div class=\"stats\">");
+    out.push_str("<p class=\"actions\"><a class=\"button\" href=\"companies/index.html\">Browse companies</a><a class=\"button secondary\" href=\"sitemap-index.xml\">View sitemap</a></p></div></header>");
+    out.push_str("<main class=\"page-shell\"><section class=\"stats\">");
+    stat_card(
+        &mut out,
+        "Profiles",
+        &format_count(profiles.len()),
+        "indexed company pages",
+    );
+    stat_card(
+        &mut out,
+        "LEI verified",
+        &format_count(lei_count),
+        "matched to GLEIF records",
+    );
+    stat_card(
+        &mut out,
+        "With contacts",
+        &format_count(contact_count),
+        "public company-level contact points",
+    );
+    stat_card(
+        &mut out,
+        "Countries",
+        &format_count(by_country.len()),
+        "covered by current corpus",
+    );
+    out.push_str(
+        "</section><section class=\"panel\"><h2>Directory Coverage</h2><div class=\"metric-grid\">",
+    );
     for (region, count) in by_region {
         let _ = write!(
             out,
             "<div><strong>{}</strong><span>{} profiles</span></div>",
             html(&region),
-            count
+            format_count(count)
         );
     }
     out.push_str("</div></section>");
-    out.push_str("<section><h2>Top Countries</h2><div class=\"chips\">");
+    out.push_str("<section class=\"panel\"><h2>Top Countries</h2><div class=\"chips\">");
     let mut countries = by_country.into_iter().collect::<Vec<_>>();
     countries.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
     for (country, count) in countries.iter().take(40) {
@@ -304,7 +338,7 @@ fn home_html(profiles: &[CompanyProfile], base_url: &str) -> String {
             out,
             "<span>{} <strong>{}</strong></span>",
             html(country),
-            count
+            format_count(*count)
         );
     }
     out.push_str("</div></section></main></body></html>");
@@ -325,8 +359,8 @@ fn listing_html(
     out.push_str("<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">");
     let _ = write!(
         out,
-        "<title>B2B Companies - Page {}</title><meta name=\"description\" content=\"Browse page {} of public B2B company profiles across Europe and MENA.\">",
-        page_number, page_number
+        "<title>B2B Companies - Page {}</title><meta name=\"description\" content=\"Browse SaharaIndex company profiles with legal identifiers, country filters, public contacts when available, and RFQ routing.\">",
+        page_number
     );
     let _ = write!(
         out,
@@ -342,29 +376,31 @@ fn listing_html(
         let _ = write!(out, "<link rel=\"next\" href=\"{}\">", html_attr(&next));
     }
     out.push_str("<link rel=\"stylesheet\" href=\"../styles.css\"></head><body>");
-    out.push_str("<header><a href=\"../index.html\">Directory</a>");
+    out.push_str("<header class=\"site-header directory-header\"><nav class=\"topbar\"><a class=\"brand\" href=\"../index.html\">SaharaIndex</a><a href=\"index.html\">Companies</a><a href=\"../sitemap-index.xml\">Sitemap</a></nav><div class=\"hero compact\">");
     let _ = write!(
         out,
-        "<h1>B2B Companies</h1><p>Page {} of {}. {} total profiles.</p>",
-        page_number, page_count, total_count
+        "<p class=\"eyebrow\">Company directory</p><h1>B2B Companies</h1><p class=\"lead\">Page {} of {} with {} indexed profiles. Use the page filter for company name, country, LEI, activity, or source.</p>",
+        page_number,
+        page_count,
+        format_count(total_count)
     );
-    out.push_str("<input id=\"search\" type=\"search\" placeholder=\"Filter this page\" aria-label=\"Filter this page\"></header>");
-    out.push_str("<main><nav class=\"pager\">");
+    out.push_str("<div class=\"toolbar\"><input id=\"search\" type=\"search\" placeholder=\"Filter this page by company, country, LEI, or activity\" aria-label=\"Filter this page\"><a class=\"button\" href=\"../index.html\">Directory home</a></div></div></header>");
+    out.push_str("<main class=\"page-shell\"><nav class=\"pager\">");
     if page_index > 0 {
         let _ = write!(
             out,
-            "<a href=\"{}\">Previous</a>",
+            "<a class=\"button secondary\" href=\"{}\">Previous</a>",
             html_attr(&listing_page_local_href(page_index - 1))
         );
     }
     if page_index + 1 < page_count {
         let _ = write!(
             out,
-            "<a href=\"{}\">Next</a>",
+            "<a class=\"button secondary\" href=\"{}\">Next</a>",
             html_attr(&listing_page_local_href(page_index + 1))
         );
     }
-    out.push_str("</nav><section class=\"grid\" id=\"companies\">");
+    out.push_str("</nav><section class=\"company-grid\" id=\"companies\">");
 
     for profile in profiles {
         push_company_card(
@@ -382,38 +418,45 @@ fn listing_html(
 
 fn push_company_card(out: &mut String, profile: &CompanyProfile, href: &str) {
     let description = meta_description(profile);
+    let display_name = display_company_name(profile);
     let country = profile.country.as_deref().unwrap_or("Unknown country");
-    let company_type = profile.company_type.as_deref().unwrap_or("B2B entity");
+    let company_type = display_company_type(profile);
     let lei = evidence_value(profile, "lei");
-    let industries = if profile.industries.is_empty() {
-        "Unclassified".to_string()
-    } else {
-        profile.industries.join(", ")
-    };
+    let industries = display_industries(profile);
     let lei_badge = if lei.is_some() {
-        "<span class=\"badge\">LEI verified</span>"
+        "<span class=\"badge ok\">LEI verified</span>"
     } else {
-        ""
+        "<span class=\"badge muted\">Registry record</span>"
+    };
+    let contact_badge = if has_public_contact(profile) {
+        "<span class=\"badge ok\">Company contact</span>"
+    } else {
+        "<span class=\"badge muted\">RFQ routing</span>"
     };
     let _ = write!(
         out,
-        "<article class=\"card\" data-search=\"{}\"><a href=\"{}\"><h2>{}</h2></a><p class=\"meta\">{} · {} · {}</p>{}<p>{}</p></article>",
+        "<article class=\"company-card\" data-search=\"{}\"><div class=\"card-badges\">{}{}</div><a class=\"card-title\" href=\"{}\"><h2>{}</h2></a><p class=\"meta\">{} | {} | {}</p><p>{}</p><dl class=\"mini-facts\">{}{}{}</dl><a class=\"text-link\" href=\"{}\">Open profile</a></article>",
         html_attr(&format!(
             "{} {} {} {} {} {}",
-            profile.company_name,
+            display_name,
             country,
             company_type,
             industries,
             description,
             lei.as_deref().unwrap_or("")
         )),
-        html_attr(href),
-        html(&profile.company_name),
-        html(country),
-        html(company_type),
-        html(&industries),
         lei_badge,
-        html(&description)
+        contact_badge,
+        html_attr(href),
+        html(&display_name),
+        html(country),
+        html(&company_type),
+        html(&industries),
+        html(&description),
+        mini_fact("LEI", lei.as_deref()),
+        mini_fact("Source", Some(&profile.source_name)),
+        mini_fact("Contact", Some(contact_status(profile))),
+        html_attr(href)
     );
 }
 
@@ -423,6 +466,7 @@ fn company_html(profile: &CompanyProfile, base_url: &str) -> String {
         &format!("companies/{}.html", safe_file_stem(&profile.id)),
     );
     let description = meta_description(profile);
+    let display_name = display_company_name(profile);
     let rfq_url = rfq_url(base_url, profile);
     let lei = evidence_value(profile, "lei").unwrap_or_default();
     let mut out = String::new();
@@ -431,7 +475,7 @@ fn company_html(profile: &CompanyProfile, base_url: &str) -> String {
     let _ = write!(
         out,
         "<title>{}</title><meta name=\"description\" content=\"{}\">",
-        html(&profile.company_name),
+        html(&display_name),
         html_attr(&description)
     );
     let _ = write!(
@@ -444,23 +488,44 @@ fn company_html(profile: &CompanyProfile, base_url: &str) -> String {
     out.push_str(&organization_json_ld(profile, &canonical));
     out.push_str("</script>");
     out.push_str("<link rel=\"stylesheet\" href=\"../styles.css\"></head><body>");
-    out.push_str("<header class=\"profile-header\"><a href=\"index.html\">Companies</a><a href=\"../index.html\">Directory</a>");
-    let _ = write!(out, "<h1>{}</h1>", html(&profile.company_name));
-    let _ = write!(out, "<p>{}</p>", html(&description));
+    out.push_str("<header class=\"site-header profile-header\"><nav class=\"topbar\"><a class=\"brand\" href=\"../index.html\">SaharaIndex</a><a href=\"index.html\">Companies</a><a href=\"../sitemap-index.xml\">Sitemap</a></nav><div class=\"hero compact\">");
+    out.push_str("<p class=\"eyebrow\">Company profile</p>");
+    let _ = write!(out, "<h1>{}</h1>", html(&display_name));
+    let _ = write!(out, "<p class=\"lead\">{}</p>", html(&description));
+    out.push_str("<div class=\"card-badges\">");
+    if !lei.is_empty() {
+        out.push_str("<span class=\"badge ok\">LEI verified</span>");
+    }
     let _ = write!(
         out,
-        "<nav><a class=\"button\" href=\"{}\">Request quote</a></nav>",
+        "<span class=\"badge muted\">{}</span><span class=\"badge muted\">{}</span>",
+        html(profile.country.as_deref().unwrap_or("Country pending")),
+        html(&display_company_type(profile))
+    );
+    out.push_str("</div>");
+    let _ = write!(
+        out,
+        "<p class=\"actions\"><a class=\"button\" href=\"{}\">Request quote</a><a class=\"button secondary\" href=\"index.html\">Back to companies</a></p>",
         html_attr("#rfq")
     );
-    out.push_str("</header><main class=\"profile\">");
+    out.push_str("</div></header><main class=\"profile-layout\">");
 
-    out.push_str("<section><h2>Company</h2><dl>");
+    out.push_str("<section class=\"panel profile-summary\"><h2>Company</h2><dl>");
     field(&mut out, "Region", profile.region.as_deref());
     field(&mut out, "Country", profile.country.as_deref());
-    field(&mut out, "Type", profile.company_type.as_deref());
+    let company_type = display_company_type(profile);
+    field(&mut out, "Type", Some(&company_type));
     field(&mut out, "Domain", profile.canonical_domain.as_deref());
     field(&mut out, "Source", Some(&profile.source_name));
-    field(&mut out, "Source URL", Some(&profile.profile_url));
+    field_link(
+        &mut out,
+        "Source record",
+        &profile.profile_url,
+        "Open source record",
+    );
+    if !lei.is_empty() {
+        field(&mut out, "LEI", Some(&lei));
+    }
     out.push_str("</dl></section>");
 
     lei_verification_section(&mut out, profile);
@@ -468,18 +533,18 @@ fn company_html(profile: &CompanyProfile, base_url: &str) -> String {
     list_section(&mut out, "Specializations", &profile.specializations);
     list_section(&mut out, "Addresses", &profile.addresses);
 
-    out.push_str("<section><h2>Contacts</h2>");
+    out.push_str("<section class=\"panel\"><h2>Buyer Contact</h2>");
     if profile.contacts.emails.is_empty()
         && profile.contacts.phones.is_empty()
         && profile.contacts.websites.is_empty()
     {
         let _ = write!(
             out,
-            "<p>Official buyer contacts are being verified. Send the request through SaharaIndex for supplier routing.</p><p><a class=\"button\" href=\"{}\">Request quote</a></p>",
+            "<p>No verified company-level contact point is published for this profile yet. Send an RFQ through SaharaIndex so the request can be routed and supplier details can be verified.</p><p><a class=\"button\" href=\"{}\">Request quote</a></p>",
             html_attr("#rfq")
         );
     } else {
-        out.push_str("<ul>");
+        out.push_str("<ul class=\"contact-list\">");
         for email in &profile.contacts.emails {
             let _ = write!(out, "<li>{}</li>", html(&email.value));
         }
@@ -507,7 +572,7 @@ fn company_html(profile: &CompanyProfile, base_url: &str) -> String {
     catalog_section(&mut out, "Products", &profile.products);
     catalog_section(&mut out, "Services", &profile.services);
 
-    out.push_str("<section><h2>Validation</h2><dl>");
+    out.push_str("<section class=\"panel\"><h2>Validation</h2><dl>");
     field(&mut out, "Status", Some(&profile.validation.status));
     let score = profile.validation.score.to_string();
     field(&mut out, "Score", Some(&score));
@@ -563,7 +628,19 @@ fn field(out: &mut String, label: &str, value: Option<&str>) {
             out,
             "<dt>{}</dt><dd>{}</dd>",
             html(label),
-            linked_text(value)
+            linked_text(&clean_public_text(value))
+        );
+    }
+}
+
+fn field_link(out: &mut String, label: &str, url: &str, text: &str) {
+    if !url.trim().is_empty() {
+        let _ = write!(
+            out,
+            "<dt>{}</dt><dd><a href=\"{}\" rel=\"nofollow noopener\">{}</a></dd>",
+            html(label),
+            html_attr(url),
+            html(text)
         );
     }
 }
@@ -573,21 +650,27 @@ fn lei_verification_section(out: &mut String, profile: &CompanyProfile) {
         return;
     }
 
-    out.push_str("<section><h2>LEI Verification</h2><dl>");
+    out.push_str("<section class=\"panel lei-panel\"><h2>LEI Verification</h2><dl>");
     for (label, field_name) in [
         ("LEI", "lei"),
         ("Legal name", "gleif_legal_name"),
         ("Entity status", "gleif_entity_status"),
         ("Registration status", "gleif_registration_status"),
-        ("Entity category", "gleif_entity_category"),
-        ("Legal form", "gleif_legal_form"),
         ("Registered as", "gleif_registered_as"),
-        ("Registration authority", "gleif_registered_at"),
         ("Jurisdiction", "gleif_jurisdiction"),
-        ("Creation date", "gleif_creation_date"),
-        ("Initial registration", "gleif_initial_registration_date"),
         ("Last update", "gleif_last_update_date"),
         ("Next renewal", "gleif_next_renewal_date"),
+    ] {
+        let value = evidence_value(profile, field_name);
+        field(out, label, value.as_deref());
+    }
+    out.push_str("</dl><details><summary>Registry details</summary><dl>");
+    for (label, field_name) in [
+        ("Entity category", "gleif_entity_category"),
+        ("Legal form", "gleif_legal_form"),
+        ("Registration authority", "gleif_registered_at"),
+        ("Creation date", "gleif_creation_date"),
+        ("Initial registration", "gleif_initial_registration_date"),
         ("Corroboration", "gleif_corroboration_level"),
         ("Conformity", "gleif_conformity_flag"),
         ("Validated at", "gleif_validated_at"),
@@ -615,7 +698,7 @@ fn lei_verification_section(out: &mut String, profile: &CompanyProfile) {
         let value = evidence_value(profile, field_name);
         field(out, label, value.as_deref());
     }
-    out.push_str("</dl></section>");
+    out.push_str("</dl></details></section>");
 }
 
 fn rfq_section(
@@ -625,16 +708,17 @@ fn rfq_section(
     canonical: &str,
     rfq_url: &str,
 ) {
-    out.push_str("<section id=\"rfq\"><h2>Request Quote</h2>");
+    let display_name = display_company_name(profile);
+    out.push_str("<section id=\"rfq\" class=\"panel rfq-panel\"><h2>Request Quote</h2>");
     let _ = write!(
         out,
         "<p>Send a buyer request to SaharaIndex for routing and supplier verification for {}.</p>",
-        html(&profile.company_name)
+        html(&display_name)
     );
     let _ = write!(
         out,
         "<form class=\"rfq-form\" data-company=\"{}\" data-lei=\"{}\" data-profile=\"{}\" data-api=\"{}\" data-rfq-url=\"{}\">",
-        html_attr(&profile.company_name),
+        html_attr(&display_name),
         html_attr(lei),
         html_attr(canonical),
         html_attr(&rfq_api_url()),
@@ -657,41 +741,46 @@ fn rfq_section(
 }
 
 fn list_section(out: &mut String, title: &str, items: &[String]) {
-    out.push_str("<section>");
-    let _ = write!(out, "<h2>{}</h2>", html(title));
-    if items.is_empty() {
-        out.push_str("<p>Not captured yet.</p>");
-    } else {
-        out.push_str("<ul>");
-        for item in items {
-            let _ = write!(out, "<li>{}</li>", html(item));
-        }
-        out.push_str("</ul>");
+    let cleaned_items = items
+        .iter()
+        .map(|item| clean_public_text(item))
+        .filter(|item| !item.is_empty())
+        .filter(|item| !item.eq_ignore_ascii_case("unclassified b2b entity"))
+        .collect::<Vec<_>>();
+    if cleaned_items.is_empty() {
+        return;
     }
+    out.push_str("<section class=\"panel\">");
+    let _ = write!(out, "<h2>{}</h2>", html(title));
+    out.push_str("<ul class=\"clean-list\">");
+    for item in cleaned_items {
+        let _ = write!(out, "<li>{}</li>", html(&item));
+    }
+    out.push_str("</ul>");
     out.push_str("</section>");
 }
 
 fn catalog_section(out: &mut String, title: &str, items: &[crate::models::CatalogItem]) {
-    out.push_str("<section>");
-    let _ = write!(out, "<h2>{}</h2>", html(title));
     if items.is_empty() {
-        out.push_str("<p>Not captured yet.</p>");
-    } else {
-        out.push_str("<ul>");
-        for item in items {
-            if let Some(url) = &item.url {
-                let _ = write!(
-                    out,
-                    "<li><a href=\"{}\">{}</a></li>",
-                    html_attr(url),
-                    html(&item.name)
-                );
-            } else {
-                let _ = write!(out, "<li>{}</li>", html(&item.name));
-            }
-        }
-        out.push_str("</ul>");
+        return;
     }
+    out.push_str("<section class=\"panel\">");
+    let _ = write!(out, "<h2>{}</h2>", html(title));
+    out.push_str("<ul class=\"clean-list\">");
+    for item in items {
+        let name = clean_public_text(&item.name);
+        if let Some(url) = &item.url {
+            let _ = write!(
+                out,
+                "<li><a href=\"{}\">{}</a></li>",
+                html_attr(url),
+                html(&name)
+            );
+        } else {
+            let _ = write!(out, "<li>{}</li>", html(&name));
+        }
+    }
+    out.push_str("</ul>");
     out.push_str("</section>");
 }
 
@@ -750,33 +839,160 @@ fn rfq_api_url() -> String {
         .unwrap_or_else(|| "https://api.saharaindex.com/api/rfqs".to_string())
 }
 
-fn meta_description(profile: &CompanyProfile) -> String {
-    let description = profile.description.as_deref().unwrap_or("").trim();
-    let fallback = format!(
-        "{} B2B company profile{}{}.",
-        profile.company_name,
-        profile
-            .country
-            .as_ref()
-            .map(|country| format!(" in {country}"))
-            .unwrap_or_default(),
-        profile
-            .company_type
-            .as_ref()
-            .map(|company_type| format!(" classified as {company_type}"))
-            .unwrap_or_default()
+fn display_company_name(profile: &CompanyProfile) -> String {
+    clean_public_text(&profile.company_name)
+}
+
+fn profile_sort_key(profile: &CompanyProfile) -> (u8, String) {
+    (
+        profile_sort_priority(profile),
+        display_company_name(profile).to_ascii_lowercase(),
+    )
+}
+
+fn profile_sort_priority(profile: &CompanyProfile) -> u8 {
+    let company_type = profile.company_type.as_deref().unwrap_or_default();
+    let is_target = matches!(
+        company_type,
+        "manufacturer" | "wholesaler" | "distributor" | "exporter"
     );
-    truncate_text(if description.is_empty() {
-        &fallback
+    match (is_target, has_public_contact(profile)) {
+        (true, true) => 0,
+        (true, false) => 1,
+        (false, true) => 2,
+        (false, false) => 3,
+    }
+}
+
+fn display_company_type(profile: &CompanyProfile) -> String {
+    profile
+        .company_type
+        .as_deref()
+        .map(clean_public_text)
+        .map(|value| {
+            if value.eq_ignore_ascii_case("legal entity") {
+                "Legal entity".to_string()
+            } else {
+                value
+            }
+        })
+        .filter(|value| !value.is_empty())
+        .unwrap_or_else(|| "B2B entity".to_string())
+}
+
+fn display_industries(profile: &CompanyProfile) -> String {
+    let industries = profile
+        .industries
+        .iter()
+        .map(|value| clean_public_text(value))
+        .filter(|value| !value.is_empty())
+        .filter(|value| !value.eq_ignore_ascii_case("unclassified b2b entity"))
+        .collect::<Vec<_>>();
+
+    if industries.is_empty() {
+        "Activity not classified yet".to_string()
     } else {
-        description
-    })
+        industries.join(", ")
+    }
+}
+
+fn has_public_contact(profile: &CompanyProfile) -> bool {
+    !profile.contacts.emails.is_empty()
+        || !profile.contacts.phones.is_empty()
+        || !profile.contacts.websites.is_empty()
+}
+
+fn contact_status(profile: &CompanyProfile) -> &'static str {
+    if has_public_contact(profile) {
+        "Public company contact"
+    } else {
+        "RFQ routing"
+    }
+}
+
+fn stat_card(out: &mut String, label: &str, value: &str, note: &str) {
+    let _ = write!(
+        out,
+        "<div class=\"stat-card\"><span>{}</span><strong>{}</strong><small>{}</small></div>",
+        html(label),
+        html(value),
+        html(note)
+    );
+}
+
+fn mini_fact(label: &str, value: Option<&str>) -> String {
+    value
+        .map(clean_public_text)
+        .filter(|value| !value.is_empty())
+        .map(|value| {
+            format!(
+                "<dt>{}</dt><dd>{}</dd>",
+                html(label),
+                html(&truncate_text_to(&value, 64))
+            )
+        })
+        .unwrap_or_default()
+}
+
+fn format_count(value: usize) -> String {
+    let digits = value.to_string();
+    let mut out = String::new();
+    for (idx, ch) in digits.chars().rev().enumerate() {
+        if idx > 0 && idx % 3 == 0 {
+            out.push(',');
+        }
+        out.push(ch);
+    }
+    out.chars().rev().collect()
+}
+
+fn meta_description(profile: &CompanyProfile) -> String {
+    let description = profile
+        .description
+        .as_deref()
+        .map(clean_public_text)
+        .unwrap_or_default();
+    if !description.is_empty()
+        && !description
+            .to_ascii_lowercase()
+            .contains("still requires official website")
+    {
+        return truncate_text(&description);
+    }
+
+    let name = display_company_name(profile);
+    let country = profile
+        .country
+        .as_deref()
+        .unwrap_or("its registered market");
+    let company_type = display_company_type(profile);
+    let activity = display_industries(profile);
+    let lei = evidence_value(profile, "lei");
+    let activity_sentence = if activity == "Activity not classified yet" {
+        "Activity classification is pending.".to_string()
+    } else {
+        format!("Activity: {activity}.")
+    };
+    let fallback = format!(
+        "{} is a {} in {}. {}{} Buyers can send an RFQ through SaharaIndex while company-level contact and catalog enrichment is verified.",
+        name,
+        company_type,
+        country,
+        activity_sentence,
+        lei.map(|value| format!(" LEI: {value}.")).unwrap_or_default()
+    );
+    truncate_text(&fallback)
 }
 
 fn truncate_text(value: &str) -> String {
+    truncate_text_to(value, 220)
+}
+
+fn truncate_text_to(value: &str, max_chars: usize) -> String {
     const MAX_CHARS: usize = 220;
-    let mut out = value.chars().take(MAX_CHARS).collect::<String>();
-    if value.chars().count() > MAX_CHARS {
+    let max_chars = max_chars.min(MAX_CHARS);
+    let mut out = value.chars().take(max_chars).collect::<String>();
+    if value.chars().count() > max_chars {
         out.push_str("...");
     }
     out
@@ -832,11 +1048,12 @@ fn organization_json_ld(profile: &CompanyProfile, canonical: &str) -> String {
         value: lei,
     });
 
+    let display_name = display_company_name(profile);
     let data = OrganizationJsonLd {
         context: "https://schema.org",
         kind: "Organization",
         id: canonical,
-        name: &profile.company_name,
+        name: &display_name,
         description: meta_description(profile),
         url: profile
             .canonical_domain
@@ -890,6 +1107,57 @@ fn html_attr(value: &str) -> String {
     html(value).replace('"', "&quot;")
 }
 
+fn clean_public_text(value: &str) -> String {
+    let without_entities = value.replace("&quot;", "").replace("&#34;", "");
+    let mut out = String::new();
+    let mut last_space = false;
+
+    for ch in without_entities.chars() {
+        if ch == '"' {
+            continue;
+        }
+        if ch.is_whitespace() {
+            if !last_space && !out.is_empty() {
+                out.push(' ');
+                last_space = true;
+            }
+            continue;
+        }
+        out.push(ch);
+        last_space = false;
+    }
+
+    let mut cleaned = out
+        .trim()
+        .trim_matches(|ch| {
+            matches!(
+                ch,
+                '"' | '\'' | '.' | '&' | '+' | '*' | '-' | ',' | ';' | ':'
+            )
+        })
+        .to_string();
+    for (from, to) in [
+        (" ,", ","),
+        (" .", "."),
+        (" ;", ";"),
+        (" :", ":"),
+        ("( ", "("),
+        (" )", ")"),
+        (" - ", " - "),
+    ] {
+        cleaned = cleaned.replace(from, to);
+    }
+    while cleaned.contains("  ") {
+        cleaned = cleaned.replace("  ", " ");
+    }
+
+    if cleaned.is_empty() {
+        value.trim().to_string()
+    } else {
+        cleaned
+    }
+}
+
 fn url_component(value: &str) -> String {
     let mut out = String::new();
     for byte in value.bytes() {
@@ -922,7 +1190,7 @@ fn xml(value: &str) -> String {
 }
 
 fn site_css() -> &'static str {
-    r#"body{margin:0;font-family:Inter,Arial,sans-serif;background:#f6f7f9;color:#18202a}header{padding:24px 32px;background:#fff;border-bottom:1px solid #d9dde3}h1{margin:0 0 8px;font-size:28px}h2{font-size:18px;margin:0 0 8px}p{line-height:1.45}main{padding:24px 32px}nav{display:flex;flex-wrap:wrap;gap:10px;margin-top:14px}.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:14px}.card,section{background:#fff;border:1px solid #d9dde3;border-radius:8px;padding:16px}.card a,nav a,.profile-header a{color:#0b5cab;text-decoration:none}.button,button.button{display:inline-block;background:#0b5cab;color:#fff!important;border:0;border-radius:6px;padding:9px 12px;font-weight:700;text-decoration:none;cursor:pointer}.meta{color:#5b6675;font-size:13px}.badge{display:inline-block;margin:2px 0 6px;padding:4px 7px;border:1px solid #9eb8d7;border-radius:999px;background:#eef6ff;color:#194b7d;font-size:12px;font-weight:700}.profile{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:16px}.profile-header{display:flex;flex-wrap:wrap;gap:10px;align-items:baseline}.profile-header h1,.profile-header p{flex-basis:100%}dl{display:grid;grid-template-columns:140px 1fr;gap:8px 12px}dt{font-weight:700;color:#394454}dd{margin:0;overflow-wrap:anywhere}input,textarea{box-sizing:border-box;width:100%;margin-top:5px;padding:10px 12px;border:1px solid #bdc5d1;border-radius:6px;font:inherit}label{display:block;font-weight:700;color:#394454}.rfq-form{display:grid;gap:12px}.rfq-status{font-weight:700}.rfq-status.ok{color:#146c2e}.rfq-status.err{color:#b42318}input[type=search]{max-width:560px;margin-top:12px;font-size:15px}.pager{justify-content:space-between;margin:0 0 18px}.stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px}.stats div{border:1px solid #d9dde3;border-radius:8px;padding:12px}.stats strong{display:block;font-size:24px}.chips{display:flex;flex-wrap:wrap;gap:8px}.chips span{background:#eef1f5;border:1px solid #d9dde3;border-radius:999px;padding:6px 10px}@media(max-width:700px){header,main{padding:18px}.grid{grid-template-columns:1fr}dl{grid-template-columns:1fr}}"#
+    r#"*{box-sizing:border-box}body{margin:0;font-family:Inter,Arial,sans-serif;background:#f4f6f8;color:#17202a}a{color:#0b5cab;text-decoration:none}a:hover{text-decoration:underline}p{line-height:1.5}h1,h2{letter-spacing:0}.site-header{background:#fff;border-bottom:1px solid #d8dee8}.topbar{display:flex;align-items:center;gap:18px;max-width:1180px;margin:0 auto;padding:16px 24px}.brand{font-weight:800;color:#17202a}.hero{max-width:1180px;margin:0 auto;padding:34px 24px 38px}.hero.compact{padding-top:24px}.eyebrow{margin:0 0 8px;color:#526070;font-size:13px;font-weight:800;text-transform:uppercase}.lead{max-width:820px;color:#465466;font-size:17px}.actions,.toolbar,.pager,.card-badges{display:flex;flex-wrap:wrap;gap:10px;align-items:center}.button,button.button{display:inline-block;background:#0b5cab;color:#fff!important;border:0;border-radius:6px;padding:10px 13px;font-weight:800;text-decoration:none;cursor:pointer}.button.secondary{background:#eef2f6;color:#17202a!important;border:1px solid #cfd7e3}.page-shell{max-width:1180px;margin:0 auto;padding:24px}.stats,.metric-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:14px}.stat-card,.panel,.company-card{background:#fff;border:1px solid #d8dee8;border-radius:8px}.stat-card{padding:16px}.stat-card span,.stat-card small,.meta{color:#526070}.stat-card strong{display:block;font-size:30px;margin:4px 0;color:#17202a}.panel{padding:18px;margin-bottom:16px}.panel h2,.company-card h2{margin:0 0 10px}.metric-grid div{padding:12px;border:1px solid #e3e8ef;border-radius:6px}.metric-grid strong{display:block;font-size:20px}.chips{display:flex;flex-wrap:wrap;gap:8px}.chips span,.badge{border-radius:999px;padding:6px 10px;font-size:12px;font-weight:800}.chips span{background:#eef2f6;border:1px solid #d8dee8}.badge.ok{background:#e8f6ee;border:1px solid #a9d8bc;color:#146c2e}.badge.muted{background:#eef2f6;border:1px solid #d8dee8;color:#526070}.company-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:14px}.company-card{padding:16px;display:flex;flex-direction:column;min-height:300px}.card-title h2{font-size:18px;line-height:1.25;margin-top:10px;overflow-wrap:anywhere}.company-card p{margin:8px 0}.mini-facts,dl{display:grid;grid-template-columns:130px 1fr;gap:8px 12px}.mini-facts{margin:12px 0 16px;font-size:13px}.mini-facts dt,dt{font-weight:800;color:#394454}.mini-facts dd,dd{margin:0;overflow-wrap:anywhere}.text-link{margin-top:auto;font-weight:800}.profile-layout{max-width:1180px;margin:0 auto;padding:24px;display:grid;grid-template-columns:minmax(0,1fr) minmax(320px,420px);gap:16px}.profile-summary,.lei-panel{grid-column:1/-1}.rfq-panel{grid-column:2}.clean-list,.contact-list{margin:0;padding-left:18px}.clean-list li,.contact-list li{margin:6px 0}details{margin-top:14px}summary{cursor:pointer;font-weight:800;color:#0b5cab}input,textarea{width:100%;margin-top:6px;padding:11px 12px;border:1px solid #b8c3d1;border-radius:6px;font:inherit;background:#fff}input[type=search]{max-width:620px;margin-top:0}label{display:block;font-weight:800;color:#394454}.rfq-form{display:grid;gap:12px}.rfq-status{font-weight:800}.rfq-status.ok{color:#146c2e}.rfq-status.err{color:#b42318}@media(max-width:820px){.topbar,.hero,.page-shell,.profile-layout{padding-left:16px;padding-right:16px}.company-grid,.profile-layout{grid-template-columns:1fr}.rfq-panel{grid-column:auto}dl,.mini-facts{grid-template-columns:1fr}.toolbar input[type=search]{max-width:none}}"#
 }
 
 fn rfq_form_script() -> &'static str {
@@ -930,7 +1198,7 @@ fn rfq_form_script() -> &'static str {
 }
 
 fn site_search_script() -> &'static str {
-    r#"<script>const s=document.getElementById('search');const cards=[...document.querySelectorAll('.card')];if(s){s.addEventListener('input',()=>{const q=s.value.toLowerCase().trim();for(const c of cards){c.style.display=!q||c.dataset.search.toLowerCase().includes(q)?'':'none';}});}</script>"#
+    r#"<script>const s=document.getElementById('search');const cards=[...document.querySelectorAll('.company-card')];if(s){s.addEventListener('input',()=>{const q=s.value.toLowerCase().trim();for(const c of cards){c.style.display=!q||c.dataset.search.toLowerCase().includes(q)?'':'none';}});}</script>"#
 }
 
 async fn reset_dir(path: &Path) -> anyhow::Result<()> {
@@ -974,14 +1242,40 @@ fn fnv1a64(bytes: &[u8]) -> u64 {
 
 fn search_body(profile: &CompanyProfile) -> String {
     let mut parts = Vec::new();
+    parts.push(display_company_name(profile));
     if let Some(description) = &profile.description {
-        parts.push(description.clone());
+        parts.push(clean_public_text(description));
     }
-    parts.extend(profile.industries.clone());
-    parts.extend(profile.specializations.clone());
-    parts.extend(profile.products.iter().map(|item| item.name.clone()));
-    parts.extend(profile.services.iter().map(|item| item.name.clone()));
-    parts.extend(profile.evidence.iter().map(|item| item.value.clone()));
+    parts.extend(
+        profile
+            .industries
+            .iter()
+            .map(|value| clean_public_text(value)),
+    );
+    parts.extend(
+        profile
+            .specializations
+            .iter()
+            .map(|value| clean_public_text(value)),
+    );
+    parts.extend(
+        profile
+            .products
+            .iter()
+            .map(|item| clean_public_text(&item.name)),
+    );
+    parts.extend(
+        profile
+            .services
+            .iter()
+            .map(|item| clean_public_text(&item.name)),
+    );
+    parts.extend(
+        profile
+            .evidence
+            .iter()
+            .map(|item| clean_public_text(&item.value)),
+    );
     parts.join(" ")
 }
 

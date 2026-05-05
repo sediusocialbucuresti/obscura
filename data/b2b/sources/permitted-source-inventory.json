@@ -1,0 +1,129 @@
+{
+  "updated_at": "2026-05-06",
+  "policy": "Use official APIs, open-data downloads, or licensed feeds. Do not scrape private lead databases, login-gated directories, or sources whose bulk reuse terms are unclear.",
+  "sources": [
+    {
+      "source_id": "gleif",
+      "source_name": "GLEIF Global LEI Index API",
+      "source_url": "https://api.gleif.org/api/v1/lei-records",
+      "source_type": "official_identifier",
+      "region": "Global",
+      "access_method": ["api", "bulk_download"],
+      "scraping_feasibility": "allowed",
+      "fields": ["lei", "legal_name", "status", "addresses", "registration_authority", "parent_relationships"],
+      "contact_policy": "No company sales contacts or product catalogs expected.",
+      "automation_status": "implemented"
+    },
+    {
+      "source_id": "fr-annuaire-entreprises",
+      "source_name": "France Annuaire des Entreprises API",
+      "source_url": "https://www.data.gouv.fr/dataservices/api-recherche-dentreprises/",
+      "source_type": "official_registry",
+      "region": "Europe",
+      "country": "France",
+      "access_method": ["api"],
+      "scraping_feasibility": "allowed_with_rate_limits",
+      "fields": ["company_name", "siren", "address", "activity_code", "company_size", "status"],
+      "contact_policy": "Do not store personal dirigeants from API responses. Keep company-level registry fields only.",
+      "automation_status": "implemented"
+    },
+    {
+      "source_id": "no-bronnoysund",
+      "source_name": "Norway Bronnoysund Register Centre API",
+      "source_url": "https://data.brreg.no/enhetsregisteret/api/docs/index.html",
+      "source_type": "official_registry",
+      "region": "Europe",
+      "country": "Norway",
+      "access_method": ["api", "bulk_download"],
+      "scraping_feasibility": "allowed_with_rate_limits",
+      "fields": ["company_name", "organisation_number", "address", "activity_code", "website"],
+      "contact_policy": "Keep official company website when present. Do not collect personal contacts.",
+      "automation_status": "implemented"
+    },
+    {
+      "source_id": "uk-companies-house",
+      "source_name": "UK Companies House API",
+      "source_url": "https://developer.company-information.service.gov.uk/",
+      "source_type": "official_registry",
+      "region": "Europe",
+      "country": "United Kingdom",
+      "access_method": ["api", "bulk_download"],
+      "scraping_feasibility": "allowed_with_api_key",
+      "fields": ["company_name", "company_number", "status", "address", "sic_codes", "filings"],
+      "contact_policy": "Registry identity only; no sales-contact enrichment expected.",
+      "automation_status": "blocked_waiting_for_api_key"
+    },
+    {
+      "source_id": "opencorporates",
+      "source_name": "OpenCorporates",
+      "source_url": "https://api.opencorporates.com/documentation/API-Reference",
+      "source_type": "commercial_open_data_graph",
+      "region": "Global",
+      "access_method": ["api", "bulk_license"],
+      "scraping_feasibility": "requires_permission_or_license",
+      "fields": ["company_name", "jurisdiction", "registration_number", "status", "source_links"],
+      "contact_policy": "Use only under API/license terms; not a sales-contact source.",
+      "automation_status": "blocked_waiting_for_token_or_license"
+    },
+    {
+      "source_id": "kompass",
+      "source_name": "Kompass",
+      "source_url": "https://kompass.com/",
+      "source_type": "b2b_directory",
+      "region": "Global",
+      "access_method": ["paid_licensed_access"],
+      "scraping_feasibility": "requires_permission_or_license",
+      "fields": ["company_profile", "company_contacts", "products", "services", "firmographics"],
+      "contact_policy": "Use only contract-approved export/API. Company-level contacts only.",
+      "automation_status": "blocked_waiting_for_license"
+    },
+    {
+      "source_id": "europages",
+      "source_name": "Europages",
+      "source_url": "https://www.europages.com/",
+      "source_type": "b2b_directory",
+      "region": "Europe",
+      "access_method": ["web_directory", "partner_or_license_required_for_bulk"],
+      "scraping_feasibility": "requires_permission_or_license",
+      "fields": ["company_profile", "website", "products", "services", "export_zones", "certificates"],
+      "contact_policy": "Do not bulk scrape without permission. Company-level public fields only if licensed.",
+      "automation_status": "blocked_waiting_for_permission"
+    },
+    {
+      "source_id": "wlw",
+      "source_name": "wer liefert was",
+      "source_url": "https://www.wlw.de/",
+      "source_type": "b2b_marketplace",
+      "region": "Europe",
+      "access_method": ["web_directory", "commercial_access"],
+      "scraping_feasibility": "requires_permission_or_license",
+      "fields": ["supplier_profiles", "products", "categories"],
+      "contact_policy": "Do not bulk scrape without permission. Treat as listing-profile data.",
+      "automation_status": "blocked_waiting_for_permission"
+    },
+    {
+      "source_id": "dnb-direct-plus",
+      "source_name": "D&B Direct+",
+      "source_url": "https://www.dnb.com/products/marketing-sales/dnb-direct-plus.html",
+      "source_type": "commercial_database",
+      "region": "Global",
+      "access_method": ["paid_licensed_access"],
+      "scraping_feasibility": "requires_permission_or_license",
+      "fields": ["company_graph", "telephone", "web_address", "industry_codes", "firmographics", "financials"],
+      "contact_policy": "Use only within contract scope.",
+      "automation_status": "blocked_waiting_for_license"
+    },
+    {
+      "source_id": "orbis",
+      "source_name": "Moody's Orbis",
+      "source_url": "https://www.moodys.com/web/en/us/capabilities/company-reference-data/orbis.html",
+      "source_type": "commercial_database",
+      "region": "Global",
+      "access_method": ["paid_licensed_access"],
+      "scraping_feasibility": "requires_permission_or_license",
+      "fields": ["company_graph", "ownership", "financials", "risk", "firmographics"],
+      "contact_policy": "Use only within contract scope.",
+      "automation_status": "blocked_waiting_for_license"
+    }
+  ]
+}
