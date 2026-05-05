@@ -1,1 +1,4 @@
 /target/
+/data/b2b/
+__pycache__/
+*.pyc
