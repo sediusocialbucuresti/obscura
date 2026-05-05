@@ -1,0 +1,22 @@
+[package]
+name = "obscura-b2b"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[[bin]]
+name = "obscura-b2b"
+path = "src/main.rs"
+
+[dependencies]
+obscura-browser = { workspace = true }
+obscura-dom = { workspace = true }
+anyhow = { workspace = true }
+clap = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+tokio = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+url = { workspace = true }

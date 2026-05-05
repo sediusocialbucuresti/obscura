@@ -1,0 +1,30 @@
+{
+  "sources": [
+    {
+      "name": "Example Europe Manufacturer Directory",
+      "url": "https://example.com/europe/manufacturers",
+      "source_type": "directory",
+      "region": "Europe",
+      "industry": "Industrial manufacturing",
+      "company_type": "manufacturer",
+      "allowed_domains": ["example.com"],
+      "refresh_interval_days": 30,
+      "max_pages": 100,
+      "tags": ["europe", "manufacturer"],
+      "compliance_basis": "authorized_source_or_public_business_listing"
+    },
+    {
+      "name": "Example MENA Distributor Directory",
+      "url": "https://example.org/mena/distributors",
+      "source_type": "directory",
+      "region": "MENA",
+      "industry": "Wholesale distribution",
+      "company_type": "distributor",
+      "allowed_domains": ["example.org"],
+      "refresh_interval_days": 30,
+      "max_pages": 100,
+      "tags": ["mena", "distributor"],
+      "compliance_basis": "authorized_source_or_public_business_listing"
+    }
+  ]
+}

@@ -1590,6 +1590,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "obscura-b2b"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "clap",
+ "obscura-browser",
+ "obscura-dom",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+ "url",
+]
+
+[[package]]
 name = "obscura-browser"
 version = "0.1.0"
 dependencies = [
