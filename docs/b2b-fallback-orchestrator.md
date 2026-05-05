@@ -63,6 +63,7 @@ PORT=8080
 INTERVAL_SECONDS=18000
 HEALTH_INTERVAL_SECONDS=60
 FALLBACK_MODEL=gpt-5.3-codex-spark
+SITE_BASE_URL=http://127.0.0.1:8080
 RUN_EXPORT_ON_START=0
 TAKE_OWNERSHIP=1
 ```
@@ -73,7 +74,7 @@ Override any value when launching the watchdog:
 ZELLIJ_SESSION_NAME=b2b-fallback-orchestrator zellij run \
   --name b2b-watchdog \
   --cwd /root/obscura \
-  -- bash -lc 'INTERVAL_SECONDS=18000 HEALTH_INTERVAL_SECONDS=30 ./tools/b2b_watchdog.sh'
+  -- bash -lc 'SITE_BASE_URL=https://sediusocialbucuresti.github.io/obscura INTERVAL_SECONDS=18000 HEALTH_INTERVAL_SECONDS=30 ./tools/b2b_watchdog.sh'
 ```
 
 ## Health Checks

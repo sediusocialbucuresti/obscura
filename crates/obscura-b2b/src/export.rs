@@ -53,13 +53,17 @@ pub async fn export_outputs(
     include_personal_contacts: bool,
 ) -> anyhow::Result<usize> {
     let layout = StorageLayout::prepare(root).await?;
-    let mut profiles: Vec<CompanyProfile> = read_jsonl(&layout.profiles_jsonl).await?;
+    let profiles_raw: Vec<CompanyProfile> = read_jsonl(&layout.profiles_jsonl).await?;
+    let mut latest_by_id = BTreeMap::new();
+    for profile in profiles_raw {
+        latest_by_id.insert(profile.id.clone(), profile);
+    }
+    let mut profiles = latest_by_id.into_values().collect::<Vec<_>>();
     profiles.sort_by(|a, b| {
         a.company_name
             .to_ascii_lowercase()
             .cmp(&b.company_name.to_ascii_lowercase())
     });
-    profiles.dedup_by(|a, b| a.id == b.id);
     reset_dir(&layout.companies_dir).await?;
 
     let mut index = Vec::new();

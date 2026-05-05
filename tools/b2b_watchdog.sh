@@ -8,6 +8,7 @@ PORT="${PORT:-8080}"
 INTERVAL_SECONDS="${INTERVAL_SECONDS:-18000}"
 HEALTH_INTERVAL_SECONDS="${HEALTH_INTERVAL_SECONDS:-60}"
 FALLBACK_MODEL="${FALLBACK_MODEL:-gpt-5.3-codex-spark}"
+SITE_BASE_URL="${SITE_BASE_URL:-http://127.0.0.1:${PORT}}"
 RUN_EXPORT_ON_START="${RUN_EXPORT_ON_START:-0}"
 TAKE_OWNERSHIP="${TAKE_OWNERSHIP:-1}"
 
@@ -70,6 +71,7 @@ write_state() {
   "updated_at": "$(iso_now)",
   "status": "$status",
   "fallback_model": "$FALLBACK_MODEL",
+  "site_base_url": "$SITE_BASE_URL",
   "port": $PORT,
   "health_interval_seconds": $HEALTH_INTERVAL_SECONDS,
   "export_interval_seconds": $INTERVAL_SECONDS,
@@ -93,6 +95,7 @@ Status: $status
 Repository: $REPO_DIR
 Data directory: $DATA_DIR
 Site URL: http://127.0.0.1:$PORT/
+Canonical base URL: $SITE_BASE_URL
 Fallback model requested: $FALLBACK_MODEL
 Next scheduled export/restart: $(iso_from_epoch "$next_export_epoch")
 
@@ -201,7 +204,7 @@ run_export() {
       # shellcheck disable=SC1091
       . /root/.cargo/env
     fi
-    cargo run -p obscura-b2b -- export --out "$DATA_DIR"
+    OBSCURA_B2B_SITE_BASE_URL="$SITE_BASE_URL" cargo run -p obscura-b2b -- export --out "$DATA_DIR"
   ) >> "$LOG_FILE" 2>&1
   log "B2B export finished"
 }
