@@ -15,6 +15,8 @@ struct DirectoryIndexEntry {
     company_name: String,
     profile_url: String,
     directory_profile: String,
+    lei: Option<String>,
+    lei_status: Option<String>,
     region: Option<String>,
     country: Option<String>,
     company_type: Option<String>,
@@ -29,6 +31,7 @@ struct SearchDocument {
     id: String,
     title: String,
     body: String,
+    lei: Option<String>,
     region: Option<String>,
     country: Option<String>,
     company_type: Option<String>,
@@ -88,6 +91,8 @@ pub async fn export_outputs(
             company_name: profile.company_name.clone(),
             profile_url: profile.profile_url.clone(),
             directory_profile: format!("companies/{}", filename),
+            lei: evidence_value(profile, "lei"),
+            lei_status: evidence_value(profile, "gleif_entity_status"),
             region: profile.region.clone(),
             country: profile.country.clone(),
             company_type: profile.company_type.clone(),
@@ -101,6 +106,7 @@ pub async fn export_outputs(
             id: profile.id.clone(),
             title: profile.company_name.clone(),
             body: search_body(profile),
+            lei: evidence_value(profile, "lei"),
             region: profile.region.clone(),
             country: profile.country.clone(),
             company_type: profile.company_type.clone(),
@@ -378,23 +384,35 @@ fn push_company_card(out: &mut String, profile: &CompanyProfile, href: &str) {
     let description = meta_description(profile);
     let country = profile.country.as_deref().unwrap_or("Unknown country");
     let company_type = profile.company_type.as_deref().unwrap_or("B2B entity");
+    let lei = evidence_value(profile, "lei");
     let industries = if profile.industries.is_empty() {
         "Unclassified".to_string()
     } else {
         profile.industries.join(", ")
     };
+    let lei_badge = if lei.is_some() {
+        "<span class=\"badge\">LEI verified</span>"
+    } else {
+        ""
+    };
     let _ = write!(
         out,
-        "<article class=\"card\" data-search=\"{}\"><a href=\"{}\"><h2>{}</h2></a><p class=\"meta\">{} · {} · {}</p><p>{}</p></article>",
+        "<article class=\"card\" data-search=\"{}\"><a href=\"{}\"><h2>{}</h2></a><p class=\"meta\">{} · {} · {}</p>{}<p>{}</p></article>",
         html_attr(&format!(
-            "{} {} {} {} {}",
-            profile.company_name, country, company_type, industries, description
+            "{} {} {} {} {} {}",
+            profile.company_name,
+            country,
+            company_type,
+            industries,
+            description,
+            lei.as_deref().unwrap_or("")
         )),
         html_attr(href),
         html(&profile.company_name),
         html(country),
         html(company_type),
         html(&industries),
+        lei_badge,
         html(&description)
     );
 }
@@ -438,6 +456,7 @@ fn company_html(profile: &CompanyProfile, base_url: &str) -> String {
     field(&mut out, "Source URL", Some(&profile.profile_url));
     out.push_str("</dl></section>");
 
+    lei_verification_section(&mut out, profile);
     list_section(&mut out, "Industries", &profile.industries);
     list_section(&mut out, "Specializations", &profile.specializations);
     list_section(&mut out, "Addresses", &profile.addresses);
@@ -521,8 +540,63 @@ async fn write_sitemaps(
 
 fn field(out: &mut String, label: &str, value: Option<&str>) {
     if let Some(value) = value.map(str::trim).filter(|value| !value.is_empty()) {
-        let _ = write!(out, "<dt>{}</dt><dd>{}</dd>", html(label), html(value));
+        let _ = write!(
+            out,
+            "<dt>{}</dt><dd>{}</dd>",
+            html(label),
+            linked_text(value)
+        );
     }
+}
+
+fn lei_verification_section(out: &mut String, profile: &CompanyProfile) {
+    if evidence_value(profile, "lei").is_none() {
+        return;
+    }
+
+    out.push_str("<section><h2>LEI Verification</h2><dl>");
+    for (label, field_name) in [
+        ("LEI", "lei"),
+        ("Legal name", "gleif_legal_name"),
+        ("Entity status", "gleif_entity_status"),
+        ("Registration status", "gleif_registration_status"),
+        ("Entity category", "gleif_entity_category"),
+        ("Legal form", "gleif_legal_form"),
+        ("Registered as", "gleif_registered_as"),
+        ("Registration authority", "gleif_registered_at"),
+        ("Jurisdiction", "gleif_jurisdiction"),
+        ("Creation date", "gleif_creation_date"),
+        ("Initial registration", "gleif_initial_registration_date"),
+        ("Last update", "gleif_last_update_date"),
+        ("Next renewal", "gleif_next_renewal_date"),
+        ("Corroboration", "gleif_corroboration_level"),
+        ("Conformity", "gleif_conformity_flag"),
+        ("Validated at", "gleif_validated_at"),
+        ("Validated as", "gleif_validated_as"),
+        ("Associated entity", "gleif_associated_entity"),
+        ("Direct parent", "gleif_direct_parent"),
+        ("Ultimate parent", "gleif_ultimate_parent"),
+        (
+            "Direct parent relationship",
+            "gleif_direct_parent_relationship_url",
+        ),
+        (
+            "Ultimate parent relationship",
+            "gleif_ultimate_parent_relationship_url",
+        ),
+        (
+            "Direct parent reporting exception",
+            "gleif_direct_parent_reporting_exception_url",
+        ),
+        (
+            "Ultimate parent reporting exception",
+            "gleif_ultimate_parent_reporting_exception_url",
+        ),
+    ] {
+        let value = evidence_value(profile, field_name);
+        field(out, label, value.as_deref());
+    }
+    out.push_str("</dl></section>");
 }
 
 fn list_section(out: &mut String, title: &str, items: &[String]) {
@@ -663,7 +737,24 @@ fn organization_json_ld(profile: &CompanyProfile, canonical: &str) -> String {
         address: Vec<&'a String>,
         #[serde(skip_serializing_if = "Vec::is_empty")]
         same_as: Vec<&'a String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        identifier: Option<PropertyValueJsonLd>,
     }
+
+    #[derive(Serialize)]
+    struct PropertyValueJsonLd {
+        #[serde(rename = "@type")]
+        kind: &'static str,
+        #[serde(rename = "propertyID")]
+        property_id: &'static str,
+        value: String,
+    }
+
+    let identifier = evidence_value(profile, "lei").map(|lei| PropertyValueJsonLd {
+        kind: "PropertyValue",
+        property_id: "LEI",
+        value: lei,
+    });
 
     let data = OrganizationJsonLd {
         context: "https://schema.org",
@@ -677,6 +768,7 @@ fn organization_json_ld(profile: &CompanyProfile, canonical: &str) -> String {
             .unwrap_or_else(|| canonical.to_string()),
         address: profile.addresses.iter().collect(),
         same_as: profile.contacts.social_links.iter().collect(),
+        identifier,
     };
     serde_json::to_string(&data).unwrap_or_else(|_| "{}".to_string())
 }
@@ -722,12 +814,24 @@ fn html_attr(value: &str) -> String {
     html(value).replace('"', "&quot;")
 }
 
+fn linked_text(value: &str) -> String {
+    if value.starts_with("https://") || value.starts_with("http://") {
+        format!(
+            "<a href=\"{}\" rel=\"nofollow noopener\">{}</a>",
+            html_attr(value),
+            html(value)
+        )
+    } else {
+        html(value)
+    }
+}
+
 fn xml(value: &str) -> String {
     html_attr(value)
 }
 
 fn site_css() -> &'static str {
-    r#"body{margin:0;font-family:Inter,Arial,sans-serif;background:#f6f7f9;color:#18202a}header{padding:24px 32px;background:#fff;border-bottom:1px solid #d9dde3}h1{margin:0 0 8px;font-size:28px}h2{font-size:18px;margin:0 0 8px}p{line-height:1.45}main{padding:24px 32px}nav{display:flex;flex-wrap:wrap;gap:10px;margin-top:14px}.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:14px}.card,section{background:#fff;border:1px solid #d9dde3;border-radius:8px;padding:16px}.card a,nav a,.profile-header a{color:#0b5cab;text-decoration:none}.meta{color:#5b6675;font-size:13px}.profile{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:16px}.profile-header{display:flex;flex-wrap:wrap;gap:10px;align-items:baseline}.profile-header h1,.profile-header p{flex-basis:100%}dl{display:grid;grid-template-columns:120px 1fr;gap:8px 12px}dt{font-weight:700;color:#394454}dd{margin:0}input[type=search]{width:100%;max-width:560px;margin-top:12px;padding:10px 12px;border:1px solid #bdc5d1;border-radius:6px;font-size:15px}.pager{justify-content:space-between;margin:0 0 18px}.stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px}.stats div{border:1px solid #d9dde3;border-radius:8px;padding:12px}.stats strong{display:block;font-size:24px}.chips{display:flex;flex-wrap:wrap;gap:8px}.chips span{background:#eef1f5;border:1px solid #d9dde3;border-radius:999px;padding:6px 10px}@media(max-width:700px){header,main{padding:18px}.grid{grid-template-columns:1fr}dl{grid-template-columns:1fr}}"#
+    r#"body{margin:0;font-family:Inter,Arial,sans-serif;background:#f6f7f9;color:#18202a}header{padding:24px 32px;background:#fff;border-bottom:1px solid #d9dde3}h1{margin:0 0 8px;font-size:28px}h2{font-size:18px;margin:0 0 8px}p{line-height:1.45}main{padding:24px 32px}nav{display:flex;flex-wrap:wrap;gap:10px;margin-top:14px}.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:14px}.card,section{background:#fff;border:1px solid #d9dde3;border-radius:8px;padding:16px}.card a,nav a,.profile-header a{color:#0b5cab;text-decoration:none}.meta{color:#5b6675;font-size:13px}.badge{display:inline-block;margin:2px 0 6px;padding:4px 7px;border:1px solid #9eb8d7;border-radius:999px;background:#eef6ff;color:#194b7d;font-size:12px;font-weight:700}.profile{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:16px}.profile-header{display:flex;flex-wrap:wrap;gap:10px;align-items:baseline}.profile-header h1,.profile-header p{flex-basis:100%}dl{display:grid;grid-template-columns:140px 1fr;gap:8px 12px}dt{font-weight:700;color:#394454}dd{margin:0;overflow-wrap:anywhere}input[type=search]{width:100%;max-width:560px;margin-top:12px;padding:10px 12px;border:1px solid #bdc5d1;border-radius:6px;font-size:15px}.pager{justify-content:space-between;margin:0 0 18px}.stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px}.stats div{border:1px solid #d9dde3;border-radius:8px;padding:12px}.stats strong{display:block;font-size:24px}.chips{display:flex;flex-wrap:wrap;gap:8px}.chips span{background:#eef1f5;border:1px solid #d9dde3;border-radius:999px;padding:6px 10px}@media(max-width:700px){header,main{padding:18px}.grid{grid-template-columns:1fr}dl{grid-template-columns:1fr}}"#
 }
 
 fn site_search_script() -> &'static str {
@@ -782,7 +886,16 @@ fn search_body(profile: &CompanyProfile) -> String {
     parts.extend(profile.specializations.clone());
     parts.extend(profile.products.iter().map(|item| item.name.clone()));
     parts.extend(profile.services.iter().map(|item| item.name.clone()));
+    parts.extend(profile.evidence.iter().map(|item| item.value.clone()));
     parts.join(" ")
+}
+
+fn evidence_value(profile: &CompanyProfile, field: &str) -> Option<String> {
+    profile
+        .evidence
+        .iter()
+        .find(|item| item.field == field && !item.value.trim().is_empty())
+        .map(|item| item.value.trim().to_string())
 }
 
 fn push_segment(map: &mut BTreeMap<String, Vec<String>>, key: Option<&str>, id: &str) {
