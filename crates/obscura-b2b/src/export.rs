@@ -423,6 +423,8 @@ fn company_html(profile: &CompanyProfile, base_url: &str) -> String {
         &format!("companies/{}.html", safe_file_stem(&profile.id)),
     );
     let description = meta_description(profile);
+    let rfq_url = rfq_url(base_url, profile);
+    let lei = evidence_value(profile, "lei").unwrap_or_default();
     let mut out = String::new();
     out.push_str("<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\">");
     out.push_str("<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">");
@@ -445,6 +447,11 @@ fn company_html(profile: &CompanyProfile, base_url: &str) -> String {
     out.push_str("<header class=\"profile-header\"><a href=\"index.html\">Companies</a><a href=\"../index.html\">Directory</a>");
     let _ = write!(out, "<h1>{}</h1>", html(&profile.company_name));
     let _ = write!(out, "<p>{}</p>", html(&description));
+    let _ = write!(
+        out,
+        "<nav><a class=\"button\" href=\"{}\">Request quote</a></nav>",
+        html_attr("#rfq")
+    );
     out.push_str("</header><main class=\"profile\">");
 
     out.push_str("<section><h2>Company</h2><dl>");
@@ -466,7 +473,11 @@ fn company_html(profile: &CompanyProfile, base_url: &str) -> String {
         && profile.contacts.phones.is_empty()
         && profile.contacts.websites.is_empty()
     {
-        out.push_str("<p>No public contact points captured yet.</p>");
+        let _ = write!(
+            out,
+            "<p>Official buyer contacts are being verified. Send the request through SaharaIndex for supplier routing.</p><p><a class=\"button\" href=\"{}\">Request quote</a></p>",
+            html_attr("#rfq")
+        );
     } else {
         out.push_str("<ul>");
         for email in &profile.contacts.emails {
@@ -484,9 +495,15 @@ fn company_html(profile: &CompanyProfile, base_url: &str) -> String {
             );
         }
         out.push_str("</ul>");
+        let _ = write!(
+            out,
+            "<p><a class=\"button\" href=\"{}\">Request quote through SaharaIndex</a></p>",
+            html_attr("#rfq")
+        );
     }
     out.push_str("</section>");
 
+    rfq_section(&mut out, profile, &lei, &canonical, &rfq_url);
     catalog_section(&mut out, "Products", &profile.products);
     catalog_section(&mut out, "Services", &profile.services);
 
@@ -496,7 +513,9 @@ fn company_html(profile: &CompanyProfile, base_url: &str) -> String {
     field(&mut out, "Score", Some(&score));
     out.push_str("</dl></section>");
 
-    out.push_str("</main></body></html>");
+    out.push_str("</main>");
+    out.push_str(rfq_form_script());
+    out.push_str("</body></html>");
     out
 }
 
@@ -599,6 +618,44 @@ fn lei_verification_section(out: &mut String, profile: &CompanyProfile) {
     out.push_str("</dl></section>");
 }
 
+fn rfq_section(
+    out: &mut String,
+    profile: &CompanyProfile,
+    lei: &str,
+    canonical: &str,
+    rfq_url: &str,
+) {
+    out.push_str("<section id=\"rfq\"><h2>Request Quote</h2>");
+    let _ = write!(
+        out,
+        "<p>Send a buyer request to SaharaIndex for routing and supplier verification for {}.</p>",
+        html(&profile.company_name)
+    );
+    let _ = write!(
+        out,
+        "<form class=\"rfq-form\" data-company=\"{}\" data-lei=\"{}\" data-profile=\"{}\" data-api=\"{}\" data-rfq-url=\"{}\">",
+        html_attr(&profile.company_name),
+        html_attr(lei),
+        html_attr(canonical),
+        html_attr(&rfq_api_url()),
+        html_attr(rfq_url)
+    );
+    out.push_str(
+        "<label>Buyer name<input name=\"buyerName\" required autocomplete=\"name\"></label>",
+    );
+    out.push_str("<label>Buyer email<input name=\"buyerEmail\" type=\"email\" required autocomplete=\"email\"></label>");
+    out.push_str(
+        "<label>Buyer company<input name=\"buyerCompany\" autocomplete=\"organization\"></label>",
+    );
+    out.push_str("<label>Buyer phone<input name=\"buyerPhone\" autocomplete=\"tel\"></label>");
+    out.push_str("<label>Product needed<input name=\"productNeeded\" required placeholder=\"Product, quantity, destination\"></label>");
+    out.push_str("<label>Quantity<input name=\"quantity\" placeholder=\"e.g. 1 container, 10 tonnes, 500 units\"></label>");
+    out.push_str("<label>Destination country<input name=\"destinationCountry\" autocomplete=\"country-name\"></label>");
+    out.push_str("<label>Message<textarea name=\"message\" rows=\"4\" placeholder=\"Incoterms, specs, certifications, delivery timeline\"></textarea></label>");
+    out.push_str("<button class=\"button\" type=\"submit\">Send RFQ</button><p class=\"rfq-status\" role=\"status\"></p></form>");
+    out.push_str("</section>");
+}
+
 fn list_section(out: &mut String, title: &str, items: &[String]) {
     out.push_str("<section>");
     let _ = write!(out, "<h2>{}</h2>", html(title));
@@ -672,6 +729,25 @@ fn absolute_site_url(base_url: &str, path: &str) -> String {
         base_url.trim_end_matches('/'),
         path.trim_start_matches('/')
     )
+}
+
+fn rfq_url(base_url: &str, profile: &CompanyProfile) -> String {
+    absolute_site_url(
+        base_url,
+        &format!(
+            "rfq?company={}&lei={}",
+            url_component(&profile.id),
+            url_component(evidence_value(profile, "lei").as_deref().unwrap_or(""))
+        ),
+    )
+}
+
+fn rfq_api_url() -> String {
+    std::env::var("OBSCURA_B2B_RFQ_API_URL")
+        .ok()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+        .unwrap_or_else(|| "https://api.saharaindex.com/api/rfqs".to_string())
 }
 
 fn meta_description(profile: &CompanyProfile) -> String {
@@ -814,6 +890,21 @@ fn html_attr(value: &str) -> String {
     html(value).replace('"', "&quot;")
 }
 
+fn url_component(value: &str) -> String {
+    let mut out = String::new();
+    for byte in value.bytes() {
+        match byte {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
+                out.push(char::from(byte));
+            }
+            _ => {
+                let _ = write!(out, "%{byte:02X}");
+            }
+        }
+    }
+    out
+}
+
 fn linked_text(value: &str) -> String {
     if value.starts_with("https://") || value.starts_with("http://") {
         format!(
@@ -831,7 +922,11 @@ fn xml(value: &str) -> String {
 }
 
 fn site_css() -> &'static str {
-    r#"body{margin:0;font-family:Inter,Arial,sans-serif;background:#f6f7f9;color:#18202a}header{padding:24px 32px;background:#fff;border-bottom:1px solid #d9dde3}h1{margin:0 0 8px;font-size:28px}h2{font-size:18px;margin:0 0 8px}p{line-height:1.45}main{padding:24px 32px}nav{display:flex;flex-wrap:wrap;gap:10px;margin-top:14px}.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:14px}.card,section{background:#fff;border:1px solid #d9dde3;border-radius:8px;padding:16px}.card a,nav a,.profile-header a{color:#0b5cab;text-decoration:none}.meta{color:#5b6675;font-size:13px}.badge{display:inline-block;margin:2px 0 6px;padding:4px 7px;border:1px solid #9eb8d7;border-radius:999px;background:#eef6ff;color:#194b7d;font-size:12px;font-weight:700}.profile{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:16px}.profile-header{display:flex;flex-wrap:wrap;gap:10px;align-items:baseline}.profile-header h1,.profile-header p{flex-basis:100%}dl{display:grid;grid-template-columns:140px 1fr;gap:8px 12px}dt{font-weight:700;color:#394454}dd{margin:0;overflow-wrap:anywhere}input[type=search]{width:100%;max-width:560px;margin-top:12px;padding:10px 12px;border:1px solid #bdc5d1;border-radius:6px;font-size:15px}.pager{justify-content:space-between;margin:0 0 18px}.stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px}.stats div{border:1px solid #d9dde3;border-radius:8px;padding:12px}.stats strong{display:block;font-size:24px}.chips{display:flex;flex-wrap:wrap;gap:8px}.chips span{background:#eef1f5;border:1px solid #d9dde3;border-radius:999px;padding:6px 10px}@media(max-width:700px){header,main{padding:18px}.grid{grid-template-columns:1fr}dl{grid-template-columns:1fr}}"#
+    r#"body{margin:0;font-family:Inter,Arial,sans-serif;background:#f6f7f9;color:#18202a}header{padding:24px 32px;background:#fff;border-bottom:1px solid #d9dde3}h1{margin:0 0 8px;font-size:28px}h2{font-size:18px;margin:0 0 8px}p{line-height:1.45}main{padding:24px 32px}nav{display:flex;flex-wrap:wrap;gap:10px;margin-top:14px}.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:14px}.card,section{background:#fff;border:1px solid #d9dde3;border-radius:8px;padding:16px}.card a,nav a,.profile-header a{color:#0b5cab;text-decoration:none}.button,button.button{display:inline-block;background:#0b5cab;color:#fff!important;border:0;border-radius:6px;padding:9px 12px;font-weight:700;text-decoration:none;cursor:pointer}.meta{color:#5b6675;font-size:13px}.badge{display:inline-block;margin:2px 0 6px;padding:4px 7px;border:1px solid #9eb8d7;border-radius:999px;background:#eef6ff;color:#194b7d;font-size:12px;font-weight:700}.profile{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:16px}.profile-header{display:flex;flex-wrap:wrap;gap:10px;align-items:baseline}.profile-header h1,.profile-header p{flex-basis:100%}dl{display:grid;grid-template-columns:140px 1fr;gap:8px 12px}dt{font-weight:700;color:#394454}dd{margin:0;overflow-wrap:anywhere}input,textarea{box-sizing:border-box;width:100%;margin-top:5px;padding:10px 12px;border:1px solid #bdc5d1;border-radius:6px;font:inherit}label{display:block;font-weight:700;color:#394454}.rfq-form{display:grid;gap:12px}.rfq-status{font-weight:700}.rfq-status.ok{color:#146c2e}.rfq-status.err{color:#b42318}input[type=search]{max-width:560px;margin-top:12px;font-size:15px}.pager{justify-content:space-between;margin:0 0 18px}.stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px}.stats div{border:1px solid #d9dde3;border-radius:8px;padding:12px}.stats strong{display:block;font-size:24px}.chips{display:flex;flex-wrap:wrap;gap:8px}.chips span{background:#eef1f5;border:1px solid #d9dde3;border-radius:999px;padding:6px 10px}@media(max-width:700px){header,main{padding:18px}.grid{grid-template-columns:1fr}dl{grid-template-columns:1fr}}"#
+}
+
+fn rfq_form_script() -> &'static str {
+    r#"<script>for(const form of document.querySelectorAll('.rfq-form')){form.addEventListener('submit',async e=>{e.preventDefault();const status=form.querySelector('.rfq-status');status.className='rfq-status';status.textContent='Sending RFQ...';const data=Object.fromEntries(new FormData(form).entries());const company=form.dataset.company||'';const lei=form.dataset.lei||'';const profile=form.dataset.profile||'';const extra=[`Requested company: ${company}`,lei?`LEI: ${lei}`:'',`Profile: ${profile}`,data.message||''].filter(Boolean).join('\n');const payload={buyerName:data.buyerName,buyerCompany:data.buyerCompany||undefined,buyerEmail:data.buyerEmail,buyerPhone:data.buyerPhone||undefined,productNeeded:data.productNeeded,quantity:data.quantity||undefined,destinationCountry:data.destinationCountry||undefined,message:extra,preferredCountry:''};try{const res=await fetch(form.dataset.api,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});if(!res.ok){throw new Error(await res.text());}status.className='rfq-status ok';status.textContent='RFQ sent. SaharaIndex will route this request and follow up by email.';form.reset();}catch(err){status.className='rfq-status err';status.textContent='Could not send RFQ. Please use the main SaharaIndex RFQ page.';}})}</script>"#
 }
 
 fn site_search_script() -> &'static str {
