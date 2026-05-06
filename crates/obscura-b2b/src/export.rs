@@ -51,6 +51,37 @@ struct SegmentSummary {
     by_source_basis: BTreeMap<String, Vec<String>>,
 }
 
+#[derive(Debug, Clone, Default)]
+struct FilterOptions {
+    countries: BTreeMap<String, String>,
+    industries: BTreeMap<String, String>,
+    product_categories: BTreeMap<String, String>,
+    sources: BTreeMap<String, String>,
+    company_types: BTreeMap<String, String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct StaticCompanySearchRecord {
+    title: String,
+    url: String,
+    description: String,
+    country: String,
+    country_token: String,
+    company_type: String,
+    company_type_token: String,
+    industries: String,
+    industry_tokens: Vec<String>,
+    product_category_tokens: Vec<String>,
+    source: String,
+    source_token: String,
+    lei: Option<String>,
+    has_website: bool,
+    has_email: bool,
+    has_phone: bool,
+    has_products: bool,
+    has_services: bool,
+}
+
 pub async fn export_outputs(
     root: impl AsRef<Path>,
     include_personal_contacts: bool,
@@ -198,6 +229,7 @@ async fn write_static_site(
     write_text(site_dir.join("robots.txt"), &robots_txt(&base_url)).await?;
     write_text(site_dir.join("index.html"), &home_html(profiles, &base_url)).await?;
     write_company_listing_pages(&site_dir, profiles, &base_url).await?;
+    write_company_search_data(&site_companies_dir, profiles).await?;
 
     for profile in profiles {
         let file_stem = safe_file_stem(&profile.id);
@@ -220,6 +252,7 @@ async fn write_company_listing_pages(
     base_url: &str,
 ) -> anyhow::Result<()> {
     let page_count = listing_page_count(profiles.len());
+    let filters = filter_options(profiles);
     for page_index in 0..page_count {
         let start = page_index * LIST_PAGE_SIZE;
         let end = profiles.len().min(start + LIST_PAGE_SIZE);
@@ -229,6 +262,7 @@ async fn write_company_listing_pages(
             page_count,
             profiles.len(),
             base_url,
+            &filters,
         );
         let path = if page_index == 0 {
             site_dir.join("companies").join("index.html")
@@ -240,6 +274,18 @@ async fn write_company_listing_pages(
         write_text(path, &page).await?;
     }
     Ok(())
+}
+
+async fn write_company_search_data(
+    site_companies_dir: &Path,
+    profiles: &[CompanyProfile],
+) -> anyhow::Result<()> {
+    let records = profiles
+        .iter()
+        .map(static_search_record)
+        .collect::<Vec<_>>();
+    let json = serde_json::to_string(&records)?;
+    write_text(site_companies_dir.join("search-data.json"), &json).await
 }
 
 fn home_html(profiles: &[CompanyProfile], base_url: &str) -> String {
@@ -351,6 +397,7 @@ fn listing_html(
     page_count: usize,
     total_count: usize,
     base_url: &str,
+    filters: &FilterOptions,
 ) -> String {
     let page_number = page_index + 1;
     let canonical = absolute_site_url(base_url, &listing_page_href(page_index));
@@ -379,13 +426,64 @@ fn listing_html(
     out.push_str("<header class=\"site-header directory-header\"><nav class=\"topbar\"><a class=\"brand\" href=\"../index.html\">SaharaIndex</a><a href=\"index.html\">Companies</a><a href=\"../sitemap-index.xml\">Sitemap</a></nav><div class=\"hero compact\">");
     let _ = write!(
         out,
-        "<p class=\"eyebrow\">Company directory</p><h1>B2B Companies</h1><p class=\"lead\">Page {} of {} with {} indexed profiles. Use the page filter for company name, country, LEI, activity, or source.</p>",
+        "<p class=\"eyebrow\">Company directory</p><h1>B2B Companies</h1><p class=\"lead\">Page {} of {} with {} indexed profiles. Use the search box and filters to narrow results by country, activity, source, company type, and contact/product signals.</p>",
         page_number,
         page_count,
         format_count(total_count)
     );
-    out.push_str("<div class=\"toolbar\"><input id=\"search\" type=\"search\" placeholder=\"Filter this page by company, country, LEI, or activity\" aria-label=\"Filter this page\"><a class=\"button\" href=\"../index.html\">Directory home</a></div></div></header>");
-    out.push_str("<main class=\"page-shell\"><nav class=\"pager\">");
+    out.push_str("<div class=\"toolbar\"><input id=\"search\" type=\"search\" placeholder=\"Filter this page by company, country, LEI, activity, or source\" aria-label=\"Filter this page\"><a class=\"button\" href=\"../index.html\">Directory home</a></div></div></header>");
+    out.push_str("<main class=\"page-shell\"><section class=\"panel filter-panel\"><p class=\"filter-summary\" id=\"filter-summary\">Showing all ");
+    let _ = write!(
+        out,
+        "{}</p><div class=\"filter-controls\">",
+        format_count(profiles.len())
+    );
+    write_filter_select(
+        &mut out,
+        "filter-country",
+        "Country",
+        "All countries",
+        &filters.countries,
+    );
+    write_filter_select(
+        &mut out,
+        "filter-industry",
+        "Industry / Activity",
+        "All activities",
+        &filters.industries,
+    );
+    write_filter_select(
+        &mut out,
+        "filter-product-category",
+        "Product category",
+        "All categories",
+        &filters.product_categories,
+    );
+    write_filter_select(
+        &mut out,
+        "filter-source",
+        "Source",
+        "All sources",
+        &filters.sources,
+    );
+    write_filter_select(
+        &mut out,
+        "filter-type",
+        "Company type",
+        "All types",
+        &filters.company_types,
+    );
+    out.push_str(
+        "<div class=\"filter-item\"><span>Contact availability</span><div class=\"checkboxes\">",
+    );
+    out.push_str("<label><input id=\"filter-contact-website\" type=\"checkbox\">Website</label>");
+    out.push_str("<label><input id=\"filter-contact-email\" type=\"checkbox\">Email</label>");
+    out.push_str("<label><input id=\"filter-contact-phone\" type=\"checkbox\">Phone</label>");
+    out.push_str("</div></div><div class=\"filter-item\"><span>Catalog availability</span><div class=\"checkboxes\">");
+    out.push_str("<label><input id=\"filter-product\" type=\"checkbox\">Products</label>");
+    out.push_str("<label><input id=\"filter-service\" type=\"checkbox\">Services</label>");
+    out.push_str("</div></div><div class=\"filter-item filter-actions\"><button type=\"button\" id=\"filter-reset\" class=\"button secondary\">Reset filters</button></div></div>");
+    out.push_str("</section><nav class=\"pager\">");
     if page_index > 0 {
         let _ = write!(
             out,
@@ -410,19 +508,172 @@ fn listing_html(
         );
     }
 
-    out.push_str("</section></main>");
+    out.push_str("</section><p id=\"filter-empty\" class=\"filter-empty\" role=\"status\" hidden>No companies match the selected filters.</p></main>");
     out.push_str(site_search_script());
     out.push_str("</body></html>");
     out
 }
 
+fn write_filter_select(
+    out: &mut String,
+    id: &str,
+    label: &str,
+    all_label: &str,
+    options: &BTreeMap<String, String>,
+) {
+    let _ = write!(
+        out,
+        "<div class=\"filter-item\"><label for=\"{}\">{}</label><select id=\"{}\"><option value=\"\">{}</option>",
+        html_attr(id),
+        html(label),
+        html_attr(id),
+        html(all_label)
+    );
+    for (value, label) in options {
+        let _ = write!(
+            out,
+            "<option value=\"{}\">{}</option>",
+            html_attr(value),
+            html(label)
+        );
+    }
+    out.push_str("</select></div>");
+}
+
+fn filter_options(profiles: &[CompanyProfile]) -> FilterOptions {
+    let mut options = FilterOptions::default();
+    for profile in profiles {
+        let country = profile.country.as_deref().unwrap_or("Unknown country");
+        upsert_filter_option(&mut options.countries, country);
+
+        for industry in &profile.industries {
+            let normalized = normalized_filter_value(industry);
+            if !normalized.is_empty() && normalized != "unclassified b2b entity" {
+                upsert_filter_option(&mut options.industries, industry);
+            }
+        }
+
+        for category in product_category_labels(profile) {
+            upsert_filter_option(&mut options.product_categories, &category);
+        }
+
+        upsert_filter_option(&mut options.sources, &profile.source_name);
+        upsert_filter_option(&mut options.company_types, &display_company_type(profile));
+    }
+    options
+}
+
+fn upsert_filter_option(options: &mut BTreeMap<String, String>, value: &str) {
+    let label = clean_public_text(value);
+    let key = normalized_filter_value(&label);
+    if key.is_empty() {
+        return;
+    }
+    options.entry(key).or_insert(label);
+}
+
+fn normalized_filter_value(value: &str) -> String {
+    clean_public_text(value).to_ascii_lowercase()
+}
+
+fn static_search_record(profile: &CompanyProfile) -> StaticCompanySearchRecord {
+    let title = display_company_name(profile);
+    let country = profile
+        .country
+        .as_deref()
+        .unwrap_or("Unknown country")
+        .to_string();
+    let company_type = display_company_type(profile);
+    let industries = display_industries(profile);
+    let description = meta_description(profile);
+    let lei = evidence_value(profile, "lei");
+    let industry_tokens = industry_tokens(profile);
+    let product_category_tokens = product_category_labels(profile)
+        .iter()
+        .map(|value| normalized_filter_value(value))
+        .filter(|value| !value.is_empty())
+        .collect::<Vec<_>>();
+    let source = profile.source_name.clone();
+    StaticCompanySearchRecord {
+        title,
+        url: format!("{}.html", safe_file_stem(&profile.id)),
+        description,
+        country_token: normalized_filter_value(&country),
+        country,
+        company_type_token: normalized_filter_value(&company_type),
+        company_type,
+        industries,
+        industry_tokens,
+        product_category_tokens,
+        source_token: normalized_filter_value(&source),
+        source,
+        lei,
+        has_website: !profile.contacts.websites.is_empty(),
+        has_email: has_public_email(profile),
+        has_phone: !profile.contacts.phones.is_empty(),
+        has_products: !profile.products.is_empty(),
+        has_services: !profile.services.is_empty(),
+    }
+}
+
+fn industry_tokens(profile: &CompanyProfile) -> Vec<String> {
+    profile
+        .industries
+        .iter()
+        .filter_map(|industry| {
+            let normalized = normalized_filter_value(industry);
+            if normalized.is_empty() || normalized == "unclassified b2b entity" {
+                None
+            } else {
+                Some(normalized)
+            }
+        })
+        .collect()
+}
+
+fn product_category_labels(profile: &CompanyProfile) -> Vec<String> {
+    let mut labels = BTreeSet::new();
+    for item in profile.products.iter().chain(profile.services.iter()) {
+        if let Some(category) = item
+            .category
+            .as_deref()
+            .map(clean_public_text)
+            .filter(|value| !value.is_empty())
+        {
+            labels.insert(category);
+        } else if !item.name.trim().is_empty() {
+            labels.insert(clean_public_text(&item.name));
+        }
+    }
+    labels.into_iter().collect()
+}
+
 fn push_company_card(out: &mut String, profile: &CompanyProfile, href: &str) {
     let description = meta_description(profile);
     let display_name = display_company_name(profile);
-    let country = profile.country.as_deref().unwrap_or("Unknown country");
+    let country = profile
+        .country
+        .as_deref()
+        .unwrap_or("Unknown country")
+        .to_string();
+    let country_token = normalized_filter_value(&country);
+    let source_token = normalized_filter_value(&profile.source_name);
     let company_type = display_company_type(profile);
+    let company_type_token = normalized_filter_value(&company_type);
+    let industries_for_filter = industry_tokens(profile).join("|");
+    let product_categories_for_filter = product_category_labels(profile)
+        .iter()
+        .map(|category| normalized_filter_value(category))
+        .filter(|category| !category.is_empty())
+        .collect::<Vec<_>>()
+        .join("|");
     let lei = evidence_value(profile, "lei");
     let industries = display_industries(profile);
+    let has_website = !profile.contacts.websites.is_empty();
+    let has_email = has_public_email(profile);
+    let has_phone = !profile.contacts.phones.is_empty();
+    let has_products = !profile.products.is_empty();
+    let has_services = !profile.services.is_empty();
     let lei_badge = if lei.is_some() {
         "<span class=\"badge ok\">LEI verified</span>"
     } else {
@@ -435,27 +686,46 @@ fn push_company_card(out: &mut String, profile: &CompanyProfile, href: &str) {
     };
     let _ = write!(
         out,
-        "<article class=\"company-card\" data-search=\"{}\"><div class=\"card-badges\">{}{}</div><a class=\"card-title\" href=\"{}\"><h2>{}</h2></a><p class=\"meta\">{} | {} | {}</p><p>{}</p><dl class=\"mini-facts\">{}{}{}</dl><a class=\"text-link\" href=\"{}\">Open profile</a></article>",
+        "<article class=\"company-card\" data-search=\"{}\" data-country=\"{}\" data-industries=\"{}\" data-product-categories=\"{}\" data-source=\"{}\" data-company-type=\"{}\" data-has-website=\"{}\" data-has-email=\"{}\" data-has-phone=\"{}\" data-has-products=\"{}\" data-has-services=\"{}\"><div class=\"card-badges\">{}{}</div><a class=\"card-title\" href=\"{}\"><h2>{}</h2></a><p class=\"meta\">{} | {} | {}</p><p>{}</p><dl class=\"mini-facts\">{}{}{}{}{}</dl><a class=\"text-link\" href=\"{}\">Open profile</a></article>",
         html_attr(&format!(
-            "{} {} {} {} {} {}",
+            "{} {} {} {} {} {} {}",
             display_name,
             country,
             company_type,
             industries,
             description,
-            lei.as_deref().unwrap_or("")
+            lei.as_deref().unwrap_or(""),
+            profile.source_name
         )),
+        html_attr(&country_token),
+        html_attr(&industries_for_filter),
+        html_attr(&product_categories_for_filter),
+        html_attr(&source_token),
+        html_attr(&company_type_token),
+        if has_website { "1" } else { "0" },
+        if has_email { "1" } else { "0" },
+        if has_phone { "1" } else { "0" },
+        if has_products { "1" } else { "0" },
+        if has_services { "1" } else { "0" },
         lei_badge,
         contact_badge,
         html_attr(href),
         html(&display_name),
-        html(country),
+        html(&country),
         html(&company_type),
         html(&industries),
         html(&description),
         mini_fact("LEI", lei.as_deref()),
         mini_fact("Source", Some(&profile.source_name)),
         mini_fact("Contact", Some(contact_status(profile))),
+        mini_fact(
+            "Products",
+            Some(if has_products { "Available" } else { "Not listed" }),
+        ),
+        mini_fact(
+            "Services",
+            Some(if has_services { "Available" } else { "Not listed" }),
+        ),
         html_attr(href)
     );
 }
@@ -534,7 +804,13 @@ fn company_html(profile: &CompanyProfile, base_url: &str) -> String {
     list_section(&mut out, "Addresses", &profile.addresses);
 
     out.push_str("<section class=\"panel\"><h2>Buyer Contact</h2>");
-    if profile.contacts.emails.is_empty()
+    let public_emails = profile
+        .contacts
+        .emails
+        .iter()
+        .filter(|email| !email.personal)
+        .collect::<Vec<_>>();
+    if public_emails.is_empty()
         && profile.contacts.phones.is_empty()
         && profile.contacts.websites.is_empty()
     {
@@ -545,7 +821,7 @@ fn company_html(profile: &CompanyProfile, base_url: &str) -> String {
         );
     } else {
         out.push_str("<ul class=\"contact-list\">");
-        for email in &profile.contacts.emails {
+        for email in public_emails {
             let _ = write!(out, "<li>{}</li>", html(&email.value));
         }
         for phone in &profile.contacts.phones {
@@ -897,9 +1173,13 @@ fn display_industries(profile: &CompanyProfile) -> String {
 }
 
 fn has_public_contact(profile: &CompanyProfile) -> bool {
-    !profile.contacts.emails.is_empty()
+    has_public_email(profile)
         || !profile.contacts.phones.is_empty()
         || !profile.contacts.websites.is_empty()
+}
+
+fn has_public_email(profile: &CompanyProfile) -> bool {
+    profile.contacts.emails.iter().any(|email| !email.personal)
 }
 
 fn contact_status(profile: &CompanyProfile) -> &'static str {
@@ -1190,7 +1470,7 @@ fn xml(value: &str) -> String {
 }
 
 fn site_css() -> &'static str {
-    r#"*{box-sizing:border-box}body{margin:0;font-family:Inter,Arial,sans-serif;background:#f4f6f8;color:#17202a}a{color:#0b5cab;text-decoration:none}a:hover{text-decoration:underline}p{line-height:1.5}h1,h2{letter-spacing:0}.site-header{background:#fff;border-bottom:1px solid #d8dee8}.topbar{display:flex;align-items:center;gap:18px;max-width:1180px;margin:0 auto;padding:16px 24px}.brand{font-weight:800;color:#17202a}.hero{max-width:1180px;margin:0 auto;padding:34px 24px 38px}.hero.compact{padding-top:24px}.eyebrow{margin:0 0 8px;color:#526070;font-size:13px;font-weight:800;text-transform:uppercase}.lead{max-width:820px;color:#465466;font-size:17px}.actions,.toolbar,.pager,.card-badges{display:flex;flex-wrap:wrap;gap:10px;align-items:center}.button,button.button{display:inline-block;background:#0b5cab;color:#fff!important;border:0;border-radius:6px;padding:10px 13px;font-weight:800;text-decoration:none;cursor:pointer}.button.secondary{background:#eef2f6;color:#17202a!important;border:1px solid #cfd7e3}.page-shell{max-width:1180px;margin:0 auto;padding:24px}.stats,.metric-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:14px}.stat-card,.panel,.company-card{background:#fff;border:1px solid #d8dee8;border-radius:8px}.stat-card{padding:16px}.stat-card span,.stat-card small,.meta{color:#526070}.stat-card strong{display:block;font-size:30px;margin:4px 0;color:#17202a}.panel{padding:18px;margin-bottom:16px}.panel h2,.company-card h2{margin:0 0 10px}.metric-grid div{padding:12px;border:1px solid #e3e8ef;border-radius:6px}.metric-grid strong{display:block;font-size:20px}.chips{display:flex;flex-wrap:wrap;gap:8px}.chips span,.badge{border-radius:999px;padding:6px 10px;font-size:12px;font-weight:800}.chips span{background:#eef2f6;border:1px solid #d8dee8}.badge.ok{background:#e8f6ee;border:1px solid #a9d8bc;color:#146c2e}.badge.muted{background:#eef2f6;border:1px solid #d8dee8;color:#526070}.company-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:14px}.company-card{padding:16px;display:flex;flex-direction:column;min-height:300px}.card-title h2{font-size:18px;line-height:1.25;margin-top:10px;overflow-wrap:anywhere}.company-card p{margin:8px 0}.mini-facts,dl{display:grid;grid-template-columns:130px 1fr;gap:8px 12px}.mini-facts{margin:12px 0 16px;font-size:13px}.mini-facts dt,dt{font-weight:800;color:#394454}.mini-facts dd,dd{margin:0;overflow-wrap:anywhere}.text-link{margin-top:auto;font-weight:800}.profile-layout{max-width:1180px;margin:0 auto;padding:24px;display:grid;grid-template-columns:minmax(0,1fr) minmax(320px,420px);gap:16px}.profile-summary,.lei-panel{grid-column:1/-1}.rfq-panel{grid-column:2}.clean-list,.contact-list{margin:0;padding-left:18px}.clean-list li,.contact-list li{margin:6px 0}details{margin-top:14px}summary{cursor:pointer;font-weight:800;color:#0b5cab}input,textarea{width:100%;margin-top:6px;padding:11px 12px;border:1px solid #b8c3d1;border-radius:6px;font:inherit;background:#fff}input[type=search]{max-width:620px;margin-top:0}label{display:block;font-weight:800;color:#394454}.rfq-form{display:grid;gap:12px}.rfq-status{font-weight:800}.rfq-status.ok{color:#146c2e}.rfq-status.err{color:#b42318}@media(max-width:820px){.topbar,.hero,.page-shell,.profile-layout{padding-left:16px;padding-right:16px}.company-grid,.profile-layout{grid-template-columns:1fr}.rfq-panel{grid-column:auto}dl,.mini-facts{grid-template-columns:1fr}.toolbar input[type=search]{max-width:none}}"#
+    r#"*{box-sizing:border-box}body{margin:0;font-family:Inter,Arial,sans-serif;background:#f4f6f8;color:#17202a}a{color:#0b5cab;text-decoration:none}a:hover{text-decoration:underline}p{line-height:1.5}h1,h2{letter-spacing:0}.site-header{background:#fff;border-bottom:1px solid #d8dee8}.topbar{display:flex;align-items:center;gap:18px;max-width:1180px;margin:0 auto;padding:16px 24px}.brand{font-weight:800;color:#17202a}.hero{max-width:1180px;margin:0 auto;padding:34px 24px 38px}.hero.compact{padding-top:24px}.eyebrow{margin:0 0 8px;color:#526070;font-size:13px;font-weight:800;text-transform:uppercase}.lead{max-width:820px;color:#465466;font-size:17px}.actions,.toolbar,.pager,.card-badges{display:flex;flex-wrap:wrap;gap:10px;align-items:center}.button,button.button{display:inline-block;background:#0b5cab;color:#fff!important;border:0;border-radius:6px;padding:10px 13px;font-weight:800;text-decoration:none;cursor:pointer}.button.secondary{background:#eef2f6;color:#17202a!important;border:1px solid #cfd7e3}.page-shell{max-width:1180px;margin:0 auto;padding:24px}.stats,.metric-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:14px}.stat-card,.panel,.company-card{background:#fff;border:1px solid #d8dee8;border-radius:8px}.stat-card{padding:16px}.stat-card span,.stat-card small,.meta{color:#526070}.stat-card strong{display:block;font-size:30px;margin:4px 0;color:#17202a}.panel{padding:18px;margin-bottom:16px}.panel h2,.company-card h2{margin:0 0 10px}.metric-grid div{padding:12px;border:1px solid #e3e8ef;border-radius:6px}.metric-grid strong{display:block;font-size:20px}.chips{display:flex;flex-wrap:wrap;gap:8px}.chips span,.badge{border-radius:999px;padding:6px 10px;font-size:12px;font-weight:800}.chips span{background:#eef2f6;border:1px solid #d8dee8}.badge.ok{background:#e8f6ee;border:1px solid #a9d8bc;color:#146c2e}.badge.muted{background:#eef2f6;border:1px solid #d8dee8;color:#526070}.filter-panel{display:block}.filter-summary{margin:0 0 8px;color:#526070;font-weight:800}.filter-controls{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:10px}.filter-item{display:flex;flex-direction:column;gap:6px}.filter-item span{font-size:13px;font-weight:800;color:#394454}.checkboxes{display:flex;flex-wrap:wrap;gap:8px}.checkboxes label{display:flex;align-items:center;gap:6px;font-size:13px;font-weight:600;color:#394454;cursor:pointer}.checkboxes input{width:auto;margin:0}.filter-actions{align-self:flex-end}.filter-empty{margin:8px 0 0;color:#7a2c2c;font-weight:800}.company-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:14px}.company-card{padding:16px;display:flex;flex-direction:column;min-height:300px}.card-title h2{font-size:18px;line-height:1.25;margin-top:10px;overflow-wrap:anywhere}.company-card p{margin:8px 0}.mini-facts,dl{display:grid;grid-template-columns:130px 1fr;gap:8px 12px}.mini-facts{margin:12px 0 16px;font-size:13px}.mini-facts dt,dt{font-weight:800;color:#394454}.mini-facts dd,dd{margin:0;overflow-wrap:anywhere}.text-link{margin-top:auto;font-weight:800}.profile-layout{max-width:1180px;margin:0 auto;padding:24px;display:grid;grid-template-columns:minmax(0,1fr) minmax(320px,420px);gap:16px}.profile-summary,.lei-panel{grid-column:1/-1}.rfq-panel{grid-column:2}.clean-list,.contact-list{margin:0;padding-left:18px}.clean-list li,.contact-list li{margin:6px 0}details{margin-top:14px}summary{cursor:pointer;font-weight:800;color:#0b5cab}input,textarea,select{width:100%;margin-top:6px;padding:11px 12px;border:1px solid #b8c3d1;border-radius:6px;font:inherit;background:#fff}input[type=search]{max-width:620px;margin-top:0}label{display:block;font-weight:800;color:#394454}.rfq-form{display:grid;gap:12px}.rfq-status{font-weight:800}.rfq-status.ok{color:#146c2e}.rfq-status.err{color:#b42318}@media(max-width:820px){.topbar,.hero,.page-shell,.profile-layout{padding-left:16px;padding-right:16px}.company-grid,.profile-layout{grid-template-columns:1fr}.rfq-panel{grid-column:auto}dl,.mini-facts{grid-template-columns:1fr}.toolbar input[type=search]{max-width:none}.filter-controls{grid-template-columns:1fr}}"#
 }
 
 fn rfq_form_script() -> &'static str {
@@ -1198,7 +1478,7 @@ fn rfq_form_script() -> &'static str {
 }
 
 fn site_search_script() -> &'static str {
-    r#"<script>const s=document.getElementById('search');const cards=[...document.querySelectorAll('.company-card')];if(s){s.addEventListener('input',()=>{const q=s.value.toLowerCase().trim();for(const c of cards){c.style.display=!q||c.dataset.search.toLowerCase().includes(q)?'':'none';}});}</script>"#
+    r#"<script>(()=>{const MAX_RESULTS=200;const controls={search:document.getElementById('search'),country:document.getElementById('filter-country'),industry:document.getElementById('filter-industry'),productCategory:document.getElementById('filter-product-category'),source:document.getElementById('filter-source'),typeFilter:document.getElementById('filter-type'),contactWebsite:document.getElementById('filter-contact-website'),contactEmail:document.getElementById('filter-contact-email'),contactPhone:document.getElementById('filter-contact-phone'),product:document.getElementById('filter-product'),service:document.getElementById('filter-service'),reset:document.getElementById('filter-reset'),summary:document.getElementById('filter-summary'),empty:document.getElementById('filter-empty')};const grid=document.getElementById('companies');const initialCards=[...document.querySelectorAll('.company-card')];let records=[];let loaded=false;if(!grid||!initialCards.length){return;}const splitTokens=(value)=>value?value.split('|'):[];const wants=()=>({query:(controls.search&&controls.search.value.toLowerCase().trim())||'',country:(controls.country&&controls.country.value)||'',industry:(controls.industry&&controls.industry.value)||'',productCategory:(controls.productCategory&&controls.productCategory.value)||'',source:(controls.source&&controls.source.value)||'',type:(controls.typeFilter&&controls.typeFilter.value)||'',website:!!(controls.contactWebsite&&controls.contactWebsite.checked),email:!!(controls.contactEmail&&controls.contactEmail.checked),phone:!!(controls.contactPhone&&controls.contactPhone.checked),product:!!(controls.product&&controls.product.checked),service:!!(controls.service&&controls.service.checked)});const cardMatches=(card,w)=>{if(w.query&&!card.dataset.search.toLowerCase().includes(w.query)){return false;}if(w.country&&card.dataset.country!==w.country){return false;}if(w.industry&&!splitTokens(card.dataset.industries).includes(w.industry)){return false;}if(w.productCategory&&!splitTokens(card.dataset.productCategories).includes(w.productCategory)){return false;}if(w.source&&card.dataset.source!==w.source){return false;}if(w.type&&card.dataset.companyType!==w.type){return false;}if(w.website&&card.dataset.hasWebsite!=='1'){return false;}if(w.email&&card.dataset.hasEmail!=='1'){return false;}if(w.phone&&card.dataset.hasPhone!=='1'){return false;}if(w.product&&card.dataset.hasProducts!=='1'){return false;}if(w.service&&card.dataset.hasServices!=='1'){return false;}return true;};const recordText=(record)=>[record.title,record.country,record.company_type,record.industries,record.description,record.lei||'',record.source].join(' ').toLowerCase();const recordMatches=(record,w)=>{if(w.query&&!record.fulltext.includes(w.query)){return false;}if(w.country&&record.country_token!==w.country){return false;}if(w.industry&&!record.industry_tokens.includes(w.industry)){return false;}if(w.productCategory&&!record.product_category_tokens.includes(w.productCategory)){return false;}if(w.source&&record.source_token!==w.source){return false;}if(w.type&&record.company_type_token!==w.type){return false;}if(w.website&&!record.has_website){return false;}if(w.email&&!record.has_email){return false;}if(w.phone&&!record.has_phone){return false;}if(w.product&&!record.has_products){return false;}if(w.service&&!record.has_services){return false;}return true;};const addText=(parent,tag,cls,text)=>{const node=document.createElement(tag);if(cls){node.className=cls;}node.textContent=text;parent.appendChild(node);return node;};const addFact=(dl,label,value)=>{if(!value){return;}addText(dl,'dt','',label);addText(dl,'dd','',value);};const renderRecord=(record)=>{const article=document.createElement('article');article.className='company-card';const badges=addText(article,'div','card-badges','');addText(badges,'span',record.lei?'badge ok':'badge muted',record.lei?'LEI verified':'Registry record');addText(badges,'span',(record.has_website||record.has_email||record.has_phone)?'badge ok':'badge muted',(record.has_website||record.has_email||record.has_phone)?'Company contact':'RFQ routing');const link=document.createElement('a');link.className='card-title';link.href=record.url;const h2=document.createElement('h2');h2.textContent=record.title;link.appendChild(h2);article.appendChild(link);addText(article,'p','meta',`${record.country} | ${record.company_type} | ${record.industries}`);addText(article,'p','',record.description);const dl=document.createElement('dl');dl.className='mini-facts';addFact(dl,'LEI',record.lei);addFact(dl,'Source',record.source);addFact(dl,'Contact',(record.has_website||record.has_email||record.has_phone)?'Public company contact':'RFQ routing');addFact(dl,'Products',record.has_products?'Available':'Not listed');addFact(dl,'Services',record.has_services?'Available':'Not listed');article.appendChild(dl);const open=document.createElement('a');open.className='text-link';open.href=record.url;open.textContent='Open profile';article.appendChild(open);return article;};const renderRecords=(matches)=>{const visible=matches.slice(0,MAX_RESULTS);const fragment=document.createDocumentFragment();for(const record of visible){fragment.appendChild(renderRecord(record));}grid.replaceChildren(fragment);if(controls.summary){controls.summary.textContent=`${matches.length} companies match directory filters. Showing first ${visible.length}.`;}if(controls.empty){controls.empty.hidden=matches.length>0;}};const applyFilters=()=>{const w=wants();if(loaded){renderRecords(records.filter(record=>recordMatches(record,w)));return;}let visible=0;for(const card of initialCards){const show=cardMatches(card,w);card.style.display=show?'':'none';if(show){visible+=1;}}if(controls.summary){controls.summary.textContent=`${visible} of ${initialCards.length} companies match this page filters. Loading full directory index...`;}if(controls.empty){controls.empty.hidden=visible>0;}};const onReset=()=>{if(controls.search){controls.search.value='';}[controls.country,controls.industry,controls.productCategory,controls.source,controls.typeFilter].forEach(filter=>{if(filter){filter.value='';}});[controls.contactWebsite,controls.contactEmail,controls.contactPhone,controls.product,controls.service].forEach(filter=>{if(filter){filter.checked=false;}});applyFilters();};for(const [control,event] of [[controls.search,'input'],[controls.country,'change'],[controls.industry,'change'],[controls.productCategory,'change'],[controls.source,'change'],[controls.typeFilter,'change'],[controls.contactWebsite,'change'],[controls.contactEmail,'change'],[controls.contactPhone,'change'],[controls.product,'change'],[controls.service,'change']]){if(control){control.addEventListener(event,applyFilters);}}if(controls.reset){controls.reset.addEventListener('click',onReset);}applyFilters();fetch('search-data.json',{headers:{Accept:'application/json'}}).then(response=>response.ok?response.json():Promise.reject(new Error('search-data unavailable'))).then(data=>{records=Array.isArray(data)?data.map(record=>({...record,fulltext:recordText(record)})):[];loaded=records.length>0;applyFilters();}).catch(()=>{if(controls.summary){controls.summary.textContent=`Full directory index unavailable. ${initialCards.length} current page companies can be filtered.`;}});})();</script>"#
 }
 
 async fn reset_dir(path: &Path) -> anyhow::Result<()> {

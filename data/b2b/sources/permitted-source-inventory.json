@@ -36,8 +36,46 @@
       "country": "Norway",
       "access_method": ["api", "bulk_download"],
       "scraping_feasibility": "allowed_with_rate_limits",
-      "fields": ["company_name", "organisation_number", "address", "activity_code", "website"],
-      "contact_policy": "Keep official company website when present. Do not collect personal contacts.",
+      "fields": ["company_name", "organisation_number", "address", "activity_code", "website", "registry_email", "phone", "mobile"],
+      "contact_policy": "Keep official company website and switchboard phone when present. Drop personal-looking registry emails from public buyer contact output.",
+      "automation_status": "implemented"
+    },
+    {
+      "source_id": "fi-prh-ytj",
+      "source_name": "Finland PRH YTJ Open Data API",
+      "source_url": "https://avoindata.prh.fi/opendata-ytj-api/v3/schema?lang=en",
+      "source_type": "official_registry",
+      "region": "Europe",
+      "country": "Finland",
+      "access_method": ["api", "bulk_download"],
+      "scraping_feasibility": "allowed_with_rate_limits",
+      "fields": ["company_name", "business_id", "address", "activity_code", "website", "status"],
+      "contact_policy": "Keep official company website when present. No personal contacts are collected.",
+      "automation_status": "implemented"
+    },
+    {
+      "source_id": "ee-ebusiness-register-open-data",
+      "source_name": "Estonia e-Business Register Open Data",
+      "source_url": "https://avaandmed.ariregister.rik.ee/en/downloading-open-data",
+      "source_type": "official_registry_open_data",
+      "region": "Europe",
+      "country": "Estonia",
+      "access_method": ["bulk_download"],
+      "scraping_feasibility": "allowed_with_rate_limits",
+      "fields": ["company_name", "registry_code", "address", "activity_code", "website", "role_email", "phone"],
+      "contact_policy": "Keep only registry-level websites, role/generic company-domain emails, and phone/fax values.",
+      "automation_status": "implemented"
+    },
+    {
+      "source_id": "official-company-websites",
+      "source_name": "Official Company Websites",
+      "source_url": "https://saharaindex.com/companies/",
+      "source_type": "company_website_enrichment",
+      "region": "Global",
+      "access_method": ["same_domain_crawl"],
+      "scraping_feasibility": "allowed_with_robots_txt",
+      "fields": ["role_email", "phone", "product_links", "service_links", "source_pages"],
+      "contact_policy": "Only crawl websites already present in verified profiles. Obey robots.txt, stay on same domain, and exclude personal emails from default buyer/Mautic output.",
       "automation_status": "implemented"
     },
     {

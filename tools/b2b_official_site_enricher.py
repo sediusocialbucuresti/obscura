@@ -212,15 +212,24 @@ def request_text(url: str, timeout: int) -> tuple[str, str]:
         return resp.geturl(), resp.read(2_000_000).decode(charset, errors="replace")
 
 
-def robots_allowed(url: str, user_agent: str, cache: dict[str, urllib.robotparser.RobotFileParser]) -> bool:
+def robots_allowed(
+    url: str,
+    user_agent: str,
+    timeout: int,
+    cache: dict[str, urllib.robotparser.RobotFileParser],
+) -> bool:
     parsed = urllib.parse.urlparse(url)
     base = f"{parsed.scheme}://{parsed.netloc}"
     parser = cache.get(base)
     if parser is None:
         parser = urllib.robotparser.RobotFileParser()
-        parser.set_url(f"{base}/robots.txt")
+        robots_url = f"{base}/robots.txt"
+        parser.set_url(robots_url)
         try:
-            parser.read()
+            request = urllib.request.Request(robots_url, headers={"User-Agent": USER_AGENT})
+            with urllib.request.urlopen(request, timeout=timeout) as response:
+                lines = response.read(200_000).decode("utf-8", errors="replace").splitlines()
+            parser.parse(lines)
         except Exception:
             return False
         cache[base] = parser
@@ -365,18 +374,43 @@ def read_targets(csv_path: Path | None, profiles: list[dict]) -> list[dict]:
         with csv_path.open(newline="", encoding="utf-8") as file:
             return [dict(row) for row in csv.DictReader(file)]
 
-    targets = []
+    latest_by_id: dict[str, dict] = {}
     for profile in profiles:
+        profile_id = profile.get("id")
+        if profile_id:
+            latest_by_id[profile_id] = profile
+
+    target_types = {"manufacturer", "wholesaler", "distributor", "exporter"}
+    latest_profiles = list(latest_by_id.values())
+    latest_profiles.sort(
+        key=lambda profile: (
+            0 if profile.get("company_type") in target_types else 1,
+            profile.get("country") or "",
+            profile.get("company_name") or "",
+        )
+    )
+
+    targets = []
+    seen: set[tuple[str, str]] = set()
+    for profile in latest_profiles:
         websites = []
         if profile.get("canonical_domain"):
             websites.append(profile["canonical_domain"])
         websites.extend(profile.get("contacts", {}).get("websites") or [])
         for website in websites:
+            normalized = normalize_url(website)
+            target_host = host(normalized)
+            if not target_host:
+                continue
+            key = (profile["id"], target_host)
+            if key in seen:
+                continue
+            seen.add(key)
             targets.append(
                 {
                     "profile_id": profile["id"],
                     "company_name": profile["company_name"],
-                    "website": website,
+                    "website": normalized,
                 }
             )
     return targets
@@ -469,7 +503,7 @@ def enrich_target(
         url = pages.pop(0)
         if url in visited or not same_site(url, root_host) or not is_html_url(url):
             continue
-        if obey_robots and not robots_allowed(url, USER_AGENT, robots_cache):
+        if obey_robots and not robots_allowed(url, USER_AGENT, timeout, robots_cache):
             continue
         visited.add(url)
         final_url, body = request_text(url, timeout)
@@ -619,7 +653,8 @@ def main() -> None:
                 enriched += 1
                 print(
                     f"ok {processed}: {summary['company_name']} "
-                    f"role_emails={summary['role_emails']} sales_people={summary['sales_people']}"
+                    f"role_emails={summary['role_emails']} sales_people={summary['sales_people']}",
+                    flush=True,
                 )
             except Exception as exc:
                 failed += 1
@@ -629,7 +664,10 @@ def main() -> None:
                     "error": str(exc),
                 }
                 summary_file.write(json.dumps(summary, ensure_ascii=False) + "\n")
-                print(f"failed {processed}: {target.get('company_name') or target.get('website')}: {exc}")
+                print(
+                    f"failed {processed}: {target.get('company_name') or target.get('website')}: {exc}",
+                    flush=True,
+                )
 
     print(
         json.dumps(
