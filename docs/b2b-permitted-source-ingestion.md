@@ -103,14 +103,14 @@ Run date: 2026-05-06.
 
 ```text
 France Annuaire des Entreprises API: appended 2,525 profiles, 3 rate-limit errors.
-Norway Bronnoysund Register Centre API: appended 5,136 fresh revisions with website/phone handling.
+Norway Bronnoysund Register Centre API: appended 5,136 fresh revisions with website/phone handling, then 1,444 additional new profiles.
 Finland PRH YTJ Open Data API: appended 2,119 profiles before stopping slow duplicate-heavy prefix scans.
-Estonia e-Business Register Open Data: appended 3,000 contact-bearing profiles from the official archive.
-Official company website enrichment: appended 120+ profile revisions across bounded runs, including 16 profiles with product links and 12 with service links.
-Latest profile count after run: 62,762.
-Profiles with websites after run: 2,667.
-Profiles with role/generic emails after run: 949.
-Profiles with phones after run: 4,712.
+Estonia e-Business Register Open Data: appended 6,000 contact-bearing profiles from the official archive.
+Official company website enrichment: appended 360+ profile revisions across bounded runs, including 88 profiles with product links and 66 with service links.
+Latest profile count after run: 67,206.
+Profiles with websites after run: 4,005.
+Profiles with role/generic emails after run: 1,651.
+Profiles with phones after run: 7,728.
 ```
 
 The live export should be rebuilt after each append:

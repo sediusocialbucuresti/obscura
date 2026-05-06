@@ -230,6 +230,8 @@ async fn write_static_site(
     write_text(site_dir.join("index.html"), &home_html(profiles, &base_url)).await?;
     write_company_listing_pages(&site_dir, profiles, &base_url).await?;
     write_company_search_data(&site_companies_dir, profiles).await?;
+    let seo_segment_hrefs =
+        write_seo_segment_pages(&site_companies_dir, profiles, &base_url).await?;
 
     for profile in profiles {
         let file_stem = safe_file_stem(&profile.id);
@@ -241,7 +243,7 @@ async fn write_static_site(
         .await?;
     }
 
-    write_sitemaps(&site_dir, profiles, &base_url).await?;
+    write_sitemaps(&site_dir, profiles, &base_url, &seo_segment_hrefs).await?;
 
     Ok(())
 }
@@ -286,6 +288,178 @@ async fn write_company_search_data(
         .collect::<Vec<_>>();
     let json = serde_json::to_string(&records)?;
     write_text(site_companies_dir.join("search-data.json"), &json).await
+}
+
+async fn write_seo_segment_pages(
+    site_companies_dir: &Path,
+    profiles: &[CompanyProfile],
+    base_url: &str,
+) -> anyhow::Result<Vec<String>> {
+    let mut hrefs = Vec::new();
+    let mut countries = BTreeMap::<String, Vec<&CompanyProfile>>::new();
+    for profile in profiles {
+        if let Some(country) = profile
+            .country
+            .as_deref()
+            .filter(|value| !value.trim().is_empty())
+        {
+            countries
+                .entry(clean_public_text(country))
+                .or_default()
+                .push(profile);
+        }
+    }
+
+    for (country, mut country_profiles) in countries {
+        country_profiles.sort_by_key(|profile| profile_sort_key(profile));
+        let filename = format!("country-{}.html", slugify(&country));
+        let href = format!("companies/{filename}");
+        let title = format!("B2B Companies in {country}");
+        let description = format!(
+            "Browse {} SaharaIndex company profiles in {} with company-level contact signals, activity classification, supplier type, and RFQ routing.",
+            format_count(country_profiles.len()),
+            country
+        );
+        let page = seo_segment_html(
+            &title,
+            &description,
+            &country_profiles,
+            country_profiles.len(),
+            base_url,
+            &href,
+        );
+        write_text(site_companies_dir.join(&filename), &page).await?;
+        hrefs.push(href);
+    }
+
+    for (filename, title, description, segment_profiles) in [
+        (
+            "manufacturers.html",
+            "B2B Manufacturers",
+            "Browse SaharaIndex manufacturer profiles with activity classification, country coverage, contact signals, and RFQ routing.",
+            profiles
+                .iter()
+                .filter(|profile| profile.company_type.as_deref() == Some("manufacturer"))
+                .collect::<Vec<_>>(),
+        ),
+        (
+            "wholesalers.html",
+            "B2B Wholesalers",
+            "Browse SaharaIndex wholesaler profiles with country coverage, contact signals, product/service links, and RFQ routing.",
+            profiles
+                .iter()
+                .filter(|profile| profile.company_type.as_deref() == Some("wholesaler"))
+                .collect::<Vec<_>>(),
+        ),
+        (
+            "distributors.html",
+            "B2B Distributors",
+            "Browse SaharaIndex distributor profiles with countries, activity categories, public company contacts, and RFQ routing.",
+            profiles
+                .iter()
+                .filter(|profile| profile.company_type.as_deref() == Some("distributor"))
+                .collect::<Vec<_>>(),
+        ),
+        (
+            "with-website.html",
+            "Companies With Websites",
+            "Browse SaharaIndex company profiles that include an official or registry-supplied company website.",
+            profiles
+                .iter()
+                .filter(|profile| !profile.contacts.websites.is_empty())
+                .collect::<Vec<_>>(),
+        ),
+        (
+            "with-email.html",
+            "Companies With Public Email",
+            "Browse SaharaIndex company profiles that include a public role or generic company email for buyer contact.",
+            profiles
+                .iter()
+                .filter(|profile| has_public_email(profile))
+                .collect::<Vec<_>>(),
+        ),
+        (
+            "with-phone.html",
+            "Companies With Phone Numbers",
+            "Browse SaharaIndex company profiles that include a public company-level phone number.",
+            profiles
+                .iter()
+                .filter(|profile| !profile.contacts.phones.is_empty())
+                .collect::<Vec<_>>(),
+        ),
+        (
+            "with-products.html",
+            "Companies With Product Links",
+            "Browse SaharaIndex company profiles enriched with product links from official company websites.",
+            profiles
+                .iter()
+                .filter(|profile| !profile.products.is_empty())
+                .collect::<Vec<_>>(),
+        ),
+    ] {
+        if segment_profiles.is_empty() {
+            continue;
+        }
+        let href = format!("companies/{filename}");
+        let page = seo_segment_html(
+            title,
+            description,
+            &segment_profiles,
+            segment_profiles.len(),
+            base_url,
+            &href,
+        );
+        write_text(site_companies_dir.join(filename), &page).await?;
+        hrefs.push(href);
+    }
+
+    Ok(hrefs)
+}
+
+fn seo_segment_html(
+    title: &str,
+    description: &str,
+    profiles: &[&CompanyProfile],
+    total_count: usize,
+    base_url: &str,
+    href: &str,
+) -> String {
+    let canonical = absolute_site_url(base_url, href);
+    let mut out = String::new();
+    out.push_str("<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\">");
+    out.push_str("<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">");
+    let _ = write!(
+        out,
+        "<title>{}</title><meta name=\"description\" content=\"{}\">",
+        html(title),
+        html_attr(description)
+    );
+    let _ = write!(
+        out,
+        "<link rel=\"canonical\" href=\"{}\"><link rel=\"stylesheet\" href=\"../styles.css\"></head><body>",
+        html_attr(&canonical)
+    );
+    out.push_str("<header class=\"site-header directory-header\"><nav class=\"topbar\"><a class=\"brand\" href=\"../index.html\">SaharaIndex</a><a href=\"index.html\">Companies</a><a href=\"../sitemap-index.xml\">Sitemap</a></nav><div class=\"hero compact\">");
+    let _ = write!(
+        out,
+        "<p class=\"eyebrow\">SEO supplier segment</p><h1>{}</h1><p class=\"lead\">{} Showing the first {} profiles in this segment.</p><p class=\"actions\"><a class=\"button\" href=\"index.html\">Open full directory</a><a class=\"button secondary\" href=\"../index.html\">Directory home</a></p>",
+        html(title),
+        html(description),
+        format_count(profiles.len().min(LIST_PAGE_SIZE))
+    );
+    out.push_str("</div></header><main class=\"page-shell\"><section class=\"panel\"><dl>");
+    let count = total_count.to_string();
+    field(&mut out, "Indexed profiles", Some(&count));
+    out.push_str("</dl></section><section class=\"company-grid\">");
+    for profile in profiles.iter().take(LIST_PAGE_SIZE) {
+        push_company_card(
+            &mut out,
+            profile,
+            &format!("{}.html", safe_file_stem(&profile.id)),
+        );
+    }
+    out.push_str("</section></main></body></html>");
+    out
 }
 
 fn home_html(profiles: &[CompanyProfile], base_url: &str) -> String {
@@ -382,7 +556,8 @@ fn home_html(profiles: &[CompanyProfile], base_url: &str) -> String {
     for (country, count) in countries.iter().take(40) {
         let _ = write!(
             out,
-            "<span>{} <strong>{}</strong></span>",
+            "<a href=\"companies/country-{}.html\">{} <strong>{}</strong></a>",
+            html_attr(&slugify(country)),
             html(country),
             format_count(*count)
         );
@@ -634,18 +809,36 @@ fn industry_tokens(profile: &CompanyProfile) -> Vec<String> {
 fn product_category_labels(profile: &CompanyProfile) -> Vec<String> {
     let mut labels = BTreeSet::new();
     for item in profile.products.iter().chain(profile.services.iter()) {
-        if let Some(category) = item
-            .category
-            .as_deref()
-            .map(clean_public_text)
-            .filter(|value| !value.is_empty())
-        {
+        if let Some(category) = item.category.as_deref().and_then(public_catalog_label) {
             labels.insert(category);
-        } else if !item.name.trim().is_empty() {
-            labels.insert(clean_public_text(&item.name));
         }
     }
     labels.into_iter().collect()
+}
+
+fn public_catalog_label(value: &str) -> Option<String> {
+    let label = clean_public_text(value);
+    let normalized = label.to_ascii_lowercase();
+    let blocked = [
+        "product",
+        "products",
+        "service",
+        "services",
+        "skip to content",
+        "read more",
+        "view",
+        "view fullsize",
+        "click here",
+        "new",
+        "new!",
+        "vaata toodet",
+        "vaata veel",
+    ];
+    if label.len() < 3 || blocked.iter().any(|blocked| normalized == *blocked) {
+        None
+    } else {
+        Some(label)
+    }
 }
 
 fn push_company_card(out: &mut String, profile: &CompanyProfile, href: &str) {
@@ -864,11 +1057,15 @@ async fn write_sitemaps(
     site_dir: &Path,
     profiles: &[CompanyProfile],
     base_url: &str,
+    seo_segment_hrefs: &[String],
 ) -> anyhow::Result<()> {
     let mut urls = Vec::with_capacity(profiles.len() + listing_page_count(profiles.len()) + 1);
     urls.push(base_url.to_string());
     for page_index in 0..listing_page_count(profiles.len()) {
         urls.push(absolute_site_url(base_url, &listing_page_href(page_index)));
+    }
+    for href in seo_segment_hrefs {
+        urls.push(absolute_site_url(base_url, href));
     }
     for profile in profiles
         .iter()
@@ -1470,7 +1667,7 @@ fn xml(value: &str) -> String {
 }
 
 fn site_css() -> &'static str {
-    r#"*{box-sizing:border-box}body{margin:0;font-family:Inter,Arial,sans-serif;background:#f4f6f8;color:#17202a}a{color:#0b5cab;text-decoration:none}a:hover{text-decoration:underline}p{line-height:1.5}h1,h2{letter-spacing:0}.site-header{background:#fff;border-bottom:1px solid #d8dee8}.topbar{display:flex;align-items:center;gap:18px;max-width:1180px;margin:0 auto;padding:16px 24px}.brand{font-weight:800;color:#17202a}.hero{max-width:1180px;margin:0 auto;padding:34px 24px 38px}.hero.compact{padding-top:24px}.eyebrow{margin:0 0 8px;color:#526070;font-size:13px;font-weight:800;text-transform:uppercase}.lead{max-width:820px;color:#465466;font-size:17px}.actions,.toolbar,.pager,.card-badges{display:flex;flex-wrap:wrap;gap:10px;align-items:center}.button,button.button{display:inline-block;background:#0b5cab;color:#fff!important;border:0;border-radius:6px;padding:10px 13px;font-weight:800;text-decoration:none;cursor:pointer}.button.secondary{background:#eef2f6;color:#17202a!important;border:1px solid #cfd7e3}.page-shell{max-width:1180px;margin:0 auto;padding:24px}.stats,.metric-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:14px}.stat-card,.panel,.company-card{background:#fff;border:1px solid #d8dee8;border-radius:8px}.stat-card{padding:16px}.stat-card span,.stat-card small,.meta{color:#526070}.stat-card strong{display:block;font-size:30px;margin:4px 0;color:#17202a}.panel{padding:18px;margin-bottom:16px}.panel h2,.company-card h2{margin:0 0 10px}.metric-grid div{padding:12px;border:1px solid #e3e8ef;border-radius:6px}.metric-grid strong{display:block;font-size:20px}.chips{display:flex;flex-wrap:wrap;gap:8px}.chips span,.badge{border-radius:999px;padding:6px 10px;font-size:12px;font-weight:800}.chips span{background:#eef2f6;border:1px solid #d8dee8}.badge.ok{background:#e8f6ee;border:1px solid #a9d8bc;color:#146c2e}.badge.muted{background:#eef2f6;border:1px solid #d8dee8;color:#526070}.filter-panel{display:block}.filter-summary{margin:0 0 8px;color:#526070;font-weight:800}.filter-controls{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:10px}.filter-item{display:flex;flex-direction:column;gap:6px}.filter-item span{font-size:13px;font-weight:800;color:#394454}.checkboxes{display:flex;flex-wrap:wrap;gap:8px}.checkboxes label{display:flex;align-items:center;gap:6px;font-size:13px;font-weight:600;color:#394454;cursor:pointer}.checkboxes input{width:auto;margin:0}.filter-actions{align-self:flex-end}.filter-empty{margin:8px 0 0;color:#7a2c2c;font-weight:800}.company-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:14px}.company-card{padding:16px;display:flex;flex-direction:column;min-height:300px}.card-title h2{font-size:18px;line-height:1.25;margin-top:10px;overflow-wrap:anywhere}.company-card p{margin:8px 0}.mini-facts,dl{display:grid;grid-template-columns:130px 1fr;gap:8px 12px}.mini-facts{margin:12px 0 16px;font-size:13px}.mini-facts dt,dt{font-weight:800;color:#394454}.mini-facts dd,dd{margin:0;overflow-wrap:anywhere}.text-link{margin-top:auto;font-weight:800}.profile-layout{max-width:1180px;margin:0 auto;padding:24px;display:grid;grid-template-columns:minmax(0,1fr) minmax(320px,420px);gap:16px}.profile-summary,.lei-panel{grid-column:1/-1}.rfq-panel{grid-column:2}.clean-list,.contact-list{margin:0;padding-left:18px}.clean-list li,.contact-list li{margin:6px 0}details{margin-top:14px}summary{cursor:pointer;font-weight:800;color:#0b5cab}input,textarea,select{width:100%;margin-top:6px;padding:11px 12px;border:1px solid #b8c3d1;border-radius:6px;font:inherit;background:#fff}input[type=search]{max-width:620px;margin-top:0}label{display:block;font-weight:800;color:#394454}.rfq-form{display:grid;gap:12px}.rfq-status{font-weight:800}.rfq-status.ok{color:#146c2e}.rfq-status.err{color:#b42318}@media(max-width:820px){.topbar,.hero,.page-shell,.profile-layout{padding-left:16px;padding-right:16px}.company-grid,.profile-layout{grid-template-columns:1fr}.rfq-panel{grid-column:auto}dl,.mini-facts{grid-template-columns:1fr}.toolbar input[type=search]{max-width:none}.filter-controls{grid-template-columns:1fr}}"#
+    r#"*{box-sizing:border-box}body{margin:0;font-family:Inter,Arial,sans-serif;background:#f4f6f8;color:#17202a}a{color:#0b5cab;text-decoration:none}a:hover{text-decoration:underline}p{line-height:1.5}h1,h2{letter-spacing:0}.site-header{background:#fff;border-bottom:1px solid #d8dee8}.topbar{display:flex;align-items:center;gap:18px;max-width:1180px;margin:0 auto;padding:16px 24px}.brand{font-weight:800;color:#17202a}.hero{max-width:1180px;margin:0 auto;padding:34px 24px 38px}.hero.compact{padding-top:24px}.eyebrow{margin:0 0 8px;color:#526070;font-size:13px;font-weight:800;text-transform:uppercase}.lead{max-width:820px;color:#465466;font-size:17px}.actions,.toolbar,.pager,.card-badges{display:flex;flex-wrap:wrap;gap:10px;align-items:center}.button,button.button{display:inline-block;background:#0b5cab;color:#fff!important;border:0;border-radius:6px;padding:10px 13px;font-weight:800;text-decoration:none;cursor:pointer}.button.secondary{background:#eef2f6;color:#17202a!important;border:1px solid #cfd7e3}.page-shell{max-width:1180px;margin:0 auto;padding:24px}.stats,.metric-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:14px}.stat-card,.panel,.company-card{background:#fff;border:1px solid #d8dee8;border-radius:8px}.stat-card{padding:16px}.stat-card span,.stat-card small,.meta{color:#526070}.stat-card strong{display:block;font-size:30px;margin:4px 0;color:#17202a}.panel{padding:18px;margin-bottom:16px}.panel h2,.company-card h2{margin:0 0 10px}.metric-grid div{padding:12px;border:1px solid #e3e8ef;border-radius:6px}.metric-grid strong{display:block;font-size:20px}.chips{display:flex;flex-wrap:wrap;gap:8px}.chips span,.chips a,.badge{border-radius:999px;padding:6px 10px;font-size:12px;font-weight:800}.chips span,.chips a{background:#eef2f6;border:1px solid #d8dee8}.badge.ok{background:#e8f6ee;border:1px solid #a9d8bc;color:#146c2e}.badge.muted{background:#eef2f6;border:1px solid #d8dee8;color:#526070}.filter-panel{display:block}.filter-summary{margin:0 0 8px;color:#526070;font-weight:800}.filter-controls{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:10px}.filter-item{display:flex;flex-direction:column;gap:6px}.filter-item span{font-size:13px;font-weight:800;color:#394454}.checkboxes{display:flex;flex-wrap:wrap;gap:8px}.checkboxes label{display:flex;align-items:center;gap:6px;font-size:13px;font-weight:600;color:#394454;cursor:pointer}.checkboxes input{width:auto;margin:0}.filter-actions{align-self:flex-end}.filter-empty{margin:8px 0 0;color:#7a2c2c;font-weight:800}.company-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:14px}.company-card{padding:16px;display:flex;flex-direction:column;min-height:300px}.card-title h2{font-size:18px;line-height:1.25;margin-top:10px;overflow-wrap:anywhere}.company-card p{margin:8px 0}.mini-facts,dl{display:grid;grid-template-columns:130px 1fr;gap:8px 12px}.mini-facts{margin:12px 0 16px;font-size:13px}.mini-facts dt,dt{font-weight:800;color:#394454}.mini-facts dd,dd{margin:0;overflow-wrap:anywhere}.text-link{margin-top:auto;font-weight:800}.profile-layout{max-width:1180px;margin:0 auto;padding:24px;display:grid;grid-template-columns:minmax(0,1fr) minmax(320px,420px);gap:16px}.profile-summary,.lei-panel{grid-column:1/-1}.rfq-panel{grid-column:2}.clean-list,.contact-list{margin:0;padding-left:18px}.clean-list li,.contact-list li{margin:6px 0}details{margin-top:14px}summary{cursor:pointer;font-weight:800;color:#0b5cab}input,textarea,select{width:100%;margin-top:6px;padding:11px 12px;border:1px solid #b8c3d1;border-radius:6px;font:inherit;background:#fff}input[type=search]{max-width:620px;margin-top:0}label{display:block;font-weight:800;color:#394454}.rfq-form{display:grid;gap:12px}.rfq-status{font-weight:800}.rfq-status.ok{color:#146c2e}.rfq-status.err{color:#b42318}@media(max-width:820px){.topbar,.hero,.page-shell,.profile-layout{padding-left:16px;padding-right:16px}.company-grid,.profile-layout{grid-template-columns:1fr}.rfq-panel{grid-column:auto}dl,.mini-facts{grid-template-columns:1fr}.toolbar input[type=search]{max-width:none}.filter-controls{grid-template-columns:1fr}}"#
 }
 
 fn rfq_form_script() -> &'static str {

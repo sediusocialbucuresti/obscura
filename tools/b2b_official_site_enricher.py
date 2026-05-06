@@ -348,13 +348,57 @@ def extract_catalog_links(links: Iterable[tuple[str, str]], category: str) -> li
             continue
         name = clean(text) or clean(urllib.parse.urlparse(href).path.rsplit("/", 1)[-1]) or category
         key = f"{name}|{href}".lower()
-        if len(name) < 3 or key in seen:
+        if len(name) < 3 or generic_catalog_link_text(name) or key in seen:
             continue
         seen.add(key)
-        out.append({"name": name[:160], "description": None, "url": href, "category": category})
+        out.append(
+            {
+                "name": name[:160],
+                "description": None,
+                "url": href,
+                "category": catalog_category(name, href, category),
+            }
+        )
         if len(out) >= 20:
             break
     return out
+
+
+def generic_catalog_link_text(value: str) -> bool:
+    normalized = clean(value).lower().strip("!.,:;")
+    blocked = {
+        "skip to content",
+        "read more",
+        "view",
+        "view fullsize",
+        "click here",
+        "new",
+        "more",
+        "learn more",
+        "vaata toodet",
+        "vaata veel",
+    }
+    return normalized in blocked
+
+
+def catalog_category(name: str, href: str, fallback: str) -> str | None:
+    haystack = f"{name} {href}".lower()
+    category_rules = [
+        ("Food & beverage", ["food", "drink", "beverage", "brew", "meat", "fish", "bakery", "coffee", "water"]),
+        ("Industrial equipment", ["machine", "machinery", "equipment", "component", "tool", "hydraulic", "automation"]),
+        ("Construction materials", ["construction", "building", "wood", "timber", "floor", "stone", "glass", "concrete"]),
+        ("Automotive", ["auto", "vehicle", "car", "truck", "trailer", "garage", "spare"]),
+        ("Electronics", ["electronic", "electric", "battery", "sensor", "cable", "lighting", "component"]),
+        ("Textiles & apparel", ["textile", "clothing", "apparel", "fashion", "uniform", "fabric", "shoe"]),
+        ("Packaging", ["packaging", "pack", "label", "carton", "box", "bottle"]),
+        ("Healthcare supply", ["medical", "health", "pharma", "clinic", "device", "diagnostic"]),
+        ("Furniture", ["furniture", "interior", "chair", "table", "sofa", "kitchen"]),
+        ("Logistics", ["logistics", "transport", "freight", "cargo", "warehouse", "shipping"]),
+    ]
+    for label, hints in category_rules:
+        if any(hint in haystack for hint in hints):
+            return label
+    return None if fallback == "product" else "Services"
 
 
 def read_profiles(path: Path) -> list[dict]:
@@ -393,6 +437,8 @@ def read_targets(csv_path: Path | None, profiles: list[dict]) -> list[dict]:
     targets = []
     seen: set[tuple[str, str]] = set()
     for profile in latest_profiles:
+        if "official-site-enriched" in (profile.get("tags") or []):
+            continue
         websites = []
         if profile.get("canonical_domain"):
             websites.append(profile["canonical_domain"])
