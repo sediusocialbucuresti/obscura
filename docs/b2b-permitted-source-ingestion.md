@@ -120,3 +120,37 @@ OBSCURA_B2B_SITE_BASE_URL=https://saharaindex.com \
 OBSCURA_B2B_RFQ_API_URL=https://api.saharaindex.com/api/rfqs \
   cargo run -p obscura-b2b -- export --out data/b2b
 ```
+
+For large website-only deploys, set `OBSCURA_B2B_SKIP_COMPANY_JSON=1` to skip
+per-company local directory JSON files that are not published to
+`/srv/sahara-b2b-directory`.
+
+## Worldwide Expansion Run
+
+Run date: 2026-05-07.
+
+```text
+GLEIF worldwide append: appended 50,000 new legal-entity baseline profiles.
+GLEIF records fetched: 100,041.
+Duplicate LEIs skipped: 49,937.
+Transient GLEIF page errors: 1.
+Estonia e-Business Register contact expansion: corpus now includes 11,000 latest Estonia official open-data profiles.
+Follow-up Norway/Finland duplicate scan was stopped after the Estonia expansion because it was no longer adding rows fast enough for this deploy window.
+Latest deduped profile count after run: 125,707.
+LEI-verified profiles after run: 100,000.
+Profiles with websites after run: 6,604.
+Profiles with role/generic emails after run: 2,985.
+Profiles with phones after run: 12,762.
+Profiles with product links after run: 88.
+Profiles with service links after run: 66.
+```
+
+Top source coverage after the run:
+
+```text
+GLEIF Global LEI Index: 100,000.
+Estonia e-Business Register Open Data: 11,000.
+Norway Bronnoysund Register Centre API: 10,062.
+France Annuaire des Entreprises API: 2,525.
+Finland PRH YTJ Open Data API: 2,120.
+```

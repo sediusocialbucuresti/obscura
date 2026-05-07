@@ -90,3 +90,26 @@ Use the 10k GLEIF records as canonical identity seeds, then enrich in controlled
 3. Extract role-based business emails, phone numbers, product/service categories, and public catalog links.
 4. Re-export the directory and Mautic files.
 5. Keep personal contacts excluded unless a separate lawful-basis review approves them.
+
+## Worldwide Append
+
+Use the append-only importer for production corpus growth after the first pilot:
+
+```sh
+python3 tools/b2b_gleif_worldwide_append.py \
+  --out data/b2b \
+  --limit 50000 \
+  --page-size 200 \
+  --sleep 0.02
+```
+
+This importer reads existing profile IDs and LEIs from `company_profiles.jsonl`,
+opens the file in append mode, and skips duplicate LEIs. It stores raw GLEIF
+pages under `data/b2b/sources/gleif-worldwide/` and writes a run manifest to
+`data/b2b/sources/gleif-worldwide-manifest.json`.
+
+The 2026-05-07 worldwide run appended 50,000 new profiles across Americas,
+Asia-Pacific, Africa, Europe, and MENA. GLEIF remains a legal-entity baseline:
+it supplies LEI, legal name, status, registration dates, jurisdiction, and
+addresses where available, but not buyer-ready company emails, phones, websites,
+or product catalogs.

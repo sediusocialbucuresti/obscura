@@ -108,10 +108,13 @@ pub async fn export_outputs(
         by_source_basis: BTreeMap::new(),
     };
 
+    let write_company_json = !skip_company_json_files();
     for profile in &profiles {
         let file_stem = safe_file_stem(&profile.id);
         let filename = format!("{}.json", file_stem);
-        write_json_pretty(layout.companies_dir.join(&filename), profile).await?;
+        if write_company_json {
+            write_json_pretty(layout.companies_dir.join(&filename), profile).await?;
+        }
 
         index.push(DirectoryIndexEntry {
             id: profile.id.clone(),
@@ -1310,6 +1313,12 @@ fn rfq_api_url() -> String {
         .map(|value| value.trim().to_string())
         .filter(|value| !value.is_empty())
         .unwrap_or_else(|| "https://api.saharaindex.com/api/rfqs".to_string())
+}
+
+fn skip_company_json_files() -> bool {
+    std::env::var("OBSCURA_B2B_SKIP_COMPANY_JSON")
+        .map(|value| matches!(value.as_str(), "1" | "true" | "TRUE" | "yes" | "YES"))
+        .unwrap_or(false)
 }
 
 fn display_company_name(profile: &CompanyProfile) -> String {
