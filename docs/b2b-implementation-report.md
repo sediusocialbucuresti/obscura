@@ -232,6 +232,79 @@ cargo build --release --workspace
 
 The release build generated the new `obscura-b2b` binary alongside the existing workspace binaries.
 
+## 2026-05-08 Egypt Enrichment And Website UX Update
+
+Implemented the next SaharaIndex company-directory impact step:
+
+- Added image support to company profiles and static SEO pages.
+- Added the original SaharaIndex menu links to generated directory pages.
+- Added a localStorage-backed dark mode toggle compatible with the original `sahara_theme` behavior.
+- Added SEO segment pages for exporters and companies with photos.
+- Added `tools/b2b_made_in_egypt_gate_ingest.py` for permitted public Made in Egypt Gate factory data:
+  - public factory profile URL
+  - company description
+  - sector/category
+  - product/service labels
+  - public profile photos
+  - company website where exposed
+  - role/generic public company email where exposed
+  - public company phone where exposed
+- Added `tools/b2b_egypt_goeic_approved_exporters.py` for the official GOEIC approved-exporter PDF:
+  - company name
+  - approved item
+  - HS code
+  - approved exporter code
+  - approval date
+- Added `tools/b2b_expoegypt_ingest.py` for the public ExpoEgypt exporter/product directory:
+  - public exporter profile URL
+  - company email, phone, website, and address where published
+  - sector/category
+  - logo/profile image
+  - public product names, product URLs, and product images where the product listing exposes a company relation
+
+ExpoEgypt run summary:
+
+```text
+Exporter pages scanned: 488
+Product pages scanned: 420
+Exporter cards fetched: 4,874
+Profiles appended: 4,800
+Existing duplicates skipped: 74
+Product company relation keys found: 1,016
+```
+
+Corpus impact after this pass:
+
+```text
+Latest displayable profiles: 130,855
+Egypt displayable profiles: 5,313
+Egypt profiles with contacts: 5,106
+Egypt profiles with photos: 2,504
+Egypt profiles with products: 5,141
+ExpoEgypt profiles: 4,800
+Made in Egypt Gate profiles: 315
+GOEIC official exporter profiles: 34
+Worldwide profiles with photos: 2,504
+Worldwide profiles with products: 5,229
+Worldwide profiles with websites: 9,343
+Worldwide profiles with role/generic email: 7,711
+Worldwide profiles with phones: 15,745
+```
+
+Verification executed:
+
+```bash
+cargo fmt --all --check
+cargo check -q
+python3 -m py_compile tools/b2b_made_in_egypt_gate_ingest.py tools/b2b_egypt_goeic_approved_exporters.py
+python3 tools/b2b_made_in_egypt_gate_ingest.py --out /tmp/sahara-egypt-test --limit 1 --dry-run
+python3 tools/b2b_egypt_goeic_approved_exporters.py --out /tmp/sahara-egypt-test --pdf /tmp/goeic-approved-exporters.pdf --limit 3 --dry-run
+python3 tools/b2b_expoegypt_ingest.py --out /tmp/sahara-expo-test --company-pages 1 --product-pages 2 --company-limit 3 --dry-run
+python3 tools/b2b_made_in_egypt_gate_ingest.py --out data/b2b --delay 0.2
+python3 tools/b2b_egypt_goeic_approved_exporters.py --out data/b2b --pdf /tmp/goeic-approved-exporters.pdf
+python3 tools/b2b_expoegypt_ingest.py --out data/b2b --delay 0.12
+```
+
 ## Files Added Or Modified
 
 Added:

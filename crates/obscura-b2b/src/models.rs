@@ -64,6 +64,8 @@ pub struct CompanyProfile {
     pub specializations: Vec<String>,
     pub products: Vec<CatalogItem>,
     pub services: Vec<CatalogItem>,
+    #[serde(default)]
+    pub images: Vec<MediaAsset>,
     pub contacts: ContactSet,
     pub addresses: Vec<String>,
     pub company_size: Option<String>,
@@ -85,6 +87,17 @@ pub struct CatalogItem {
     pub url: Option<String>,
     #[serde(default)]
     pub category: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MediaAsset {
+    pub url: String,
+    #[serde(default)]
+    pub alt: Option<String>,
+    #[serde(default)]
+    pub kind: Option<String>,
+    #[serde(default)]
+    pub source_url: Option<String>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]

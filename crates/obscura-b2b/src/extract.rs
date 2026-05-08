@@ -122,6 +122,7 @@ pub fn extract_company_profile(page: &Page, job: &ScrapeJob) -> CompanyProfile {
         specializations: extracted.specializations,
         products: extracted.products,
         services: extracted.services,
+        images: Vec::new(),
         contacts: extracted.contacts,
         addresses: extracted.addresses,
         company_size: extracted.company_size,
