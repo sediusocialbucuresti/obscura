@@ -2,6 +2,55 @@
 
 Date: 2026-05-05
 
+## 2026-05-10 Additional Company Expansion Batch
+
+Continued company ingestion with a GPT-5.3-Codex-Spark worker used as a parallel source-selection reviewer. The worker recommended staying on already-implemented permitted lanes: official registries, GLEIF legal entities, and later controlled official-site enrichment.
+
+Ingestion executed in this batch:
+
+```text
+France Annuaire des Entreprises API: 2,500 additional official profiles appended; 5,525 fetched; 3,025 existing skipped; 0 errors.
+Norway Bronnoysund Register Centre API: 1,371 additional official profiles appended; 11,775 fetched; 10,404 existing skipped; 0 errors.
+Estonia e-Business Register open data: 0 appended because the upstream response was not a valid zip file in this run.
+GLEIF Global LEI Index API: 5,000 additional legal-entity profiles appended across EG, AE, SA, MA, TN, TR, DE, IT, ES, NL, BE, PL, and RO; 20,778 fetched; 15,684 existing skipped; 0 errors.
+```
+
+GLEIF country additions in this batch:
+
+```text
+AE 784
+SA 712
+TR 589
+ES 505
+NL 401
+RO 408
+DE 400
+IT 400
+BE 400
+PL 400
+EG 1
+MA 0
+TN 0
+```
+
+Resulting deployed website state:
+
+```text
+company_profiles.jsonl rows: 195,640
+Exported public profiles: 133,970
+Generated HTML files under companies/: 134,795
+Egypt public profiles: 2,163
+United Arab Emirates public profiles: 1,059
+Arabic-character scan across generated site: 0 files
+Public directory URL: https://saharaindex.com/companies/
+```
+
+Deployment note:
+
+```text
+The first rsync deployment was too slow for the full regenerated static tree. A hard-linked /srv/sahara-b2b-directory.next copy was created on the same filesystem, the previous web root was retained as /srv/sahara-b2b-directory.prev-20260510143357, and the Caddy container was force-recreated so its Docker bind mount pointed at the new web-root inode.
+```
+
 ## 2026-05-10 English Public Directory And Country Expansion
 
 Implemented the latest SaharaIndex public-directory cleanup and deployment pass:
