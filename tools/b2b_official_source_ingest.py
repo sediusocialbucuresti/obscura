@@ -633,6 +633,8 @@ def estonia_profile(record: dict[str, Any]) -> dict[str, Any] | None:
     details = record.get("yldandmed") or {}
     if not registry_code or not name:
         return None
+    if not is_estonian_business_name(name):
+        return None
     if text(details.get("staatus")) and text(details.get("staatus")) != "R":
         return None
 
@@ -1021,6 +1023,26 @@ def estonia_contacts(items: list[dict[str, Any]]) -> tuple[list[str], list[str],
             seen_email_domains.add(email_domain)
 
     return dedupe(websites), dedupe(emails), dedupe(phones)
+
+
+def is_estonian_business_name(name: str) -> bool:
+    upper = clean_name(name).upper()
+    markers = (
+        " OÜ",
+        " OU",
+        " AS",
+        " MTÜ",
+        " TÜ",
+        " UÜ",
+        " SA",
+        " FIE",
+        "ÜHISTU",
+        "OSAÜHING",
+        "AKTSIASELTS",
+        "TULUNDUSÜHISTU",
+        "SIHTASUTUS",
+    )
+    return any(marker in upper or upper.endswith(marker.strip()) for marker in markers)
 
 
 def is_public_company_domain(domain: str, websites: list[str]) -> bool:

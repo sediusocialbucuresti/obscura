@@ -795,9 +795,11 @@ fn filter_options(profiles: &[CompanyProfile]) -> FilterOptions {
         upsert_filter_option(&mut options.countries, country);
 
         for industry in &profile.industries {
-            let normalized = normalized_filter_value(industry);
-            if !normalized.is_empty() && normalized != "unclassified b2b entity" {
-                upsert_filter_option(&mut options.industries, industry);
+            if let Some(label) = public_industry_label(industry) {
+                let normalized = normalized_filter_value(&label);
+                if !normalized.is_empty() && normalized != "unclassified b2b entity" {
+                    upsert_filter_option(&mut options.industries, &label);
+                }
             }
         }
 
@@ -855,7 +857,7 @@ fn static_search_record(profile: &CompanyProfile) -> StaticCompanySearchRecord {
         product_category_tokens,
         source_token: normalized_filter_value(&source),
         source,
-        image_url: first_image_url(profile),
+        image_url: first_image_url(profile).map(|url| percent_encode_href(&url)),
         lei,
         has_website: !profile.contacts.websites.is_empty(),
         has_email: has_public_email(profile),
@@ -869,8 +871,9 @@ fn industry_tokens(profile: &CompanyProfile) -> Vec<String> {
     profile
         .industries
         .iter()
+        .filter_map(|industry| public_industry_label(industry))
         .filter_map(|industry| {
-            let normalized = normalized_filter_value(industry);
+            let normalized = normalized_filter_value(&industry);
             if normalized.is_empty() || normalized == "unclassified b2b entity" {
                 None
             } else {
@@ -946,7 +949,7 @@ fn push_company_card(out: &mut String, profile: &CompanyProfile, href: &str) {
             format!(
                 "<a class=\"card-media\" href=\"{}\"><img src=\"{}\" alt=\"{}\" loading=\"lazy\"></a>",
                 html_attr(href),
-                html_attr(&url),
+                href_attr(&url),
                 html_attr(&format!("{display_name} profile image"))
             )
         })
@@ -1109,14 +1112,17 @@ fn company_html(profile: &CompanyProfile, base_url: &str) -> String {
             let _ = write!(out, "<li>{}</li>", html(&email.value));
         }
         for phone in &profile.contacts.phones {
-            let _ = write!(out, "<li>{}</li>", html(&phone.value));
+            let value = normalize_public_digits(&phone.value);
+            if !value.trim().is_empty() {
+                let _ = write!(out, "<li>{}</li>", html(&value));
+            }
         }
         for website in &profile.contacts.websites {
             let _ = write!(
                 out,
                 "<li><a href=\"{}\">{}</a></li>",
-                html_attr(website),
-                html(website)
+                href_attr(website),
+                html(&percent_encode_href(website))
             );
         }
         out.push_str("</ul>");
@@ -1204,7 +1210,7 @@ fn field_link(out: &mut String, label: &str, url: &str, text: &str) {
             out,
             "<dt>{}</dt><dd><a href=\"{}\" rel=\"nofollow noopener\">{}</a></dd>",
             html(label),
-            html_attr(url),
+            href_attr(url),
             html(text)
         );
     }
@@ -1308,7 +1314,13 @@ fn rfq_section(
 fn list_section(out: &mut String, title: &str, items: &[String]) {
     let cleaned_items = items
         .iter()
-        .map(|item| clean_public_text(item))
+        .filter_map(|item| {
+            if title.eq_ignore_ascii_case("Industries") {
+                public_industry_label(item)
+            } else {
+                Some(clean_public_text(item))
+            }
+        })
         .filter(|item| !item.is_empty())
         .filter(|item| !item.eq_ignore_ascii_case("unclassified b2b entity"))
         .collect::<Vec<_>>();
@@ -1343,7 +1355,7 @@ fn media_section(out: &mut String, profile: &CompanyProfile) {
         let _ = write!(
             out,
             "<figure><img src=\"{}\" alt=\"{}\" loading=\"lazy\"><figcaption>{}</figcaption></figure>",
-            html_attr(&image.url),
+            href_attr(&image.url),
             html_attr(&alt),
             html(&alt)
         );
@@ -1368,7 +1380,7 @@ fn catalog_section(out: &mut String, title: &str, items: &[crate::models::Catalo
             let _ = write!(
                 out,
                 "<a href=\"{}\" rel=\"nofollow noopener\">{}</a>",
-                html_attr(url),
+                href_attr(url),
                 html(&name)
             );
         } else {
@@ -1497,9 +1509,11 @@ fn display_industries(profile: &CompanyProfile) -> String {
     let industries = profile
         .industries
         .iter()
-        .map(|value| clean_public_text(value))
+        .filter_map(|value| public_industry_label(value))
         .filter(|value| !value.is_empty())
         .filter(|value| !value.eq_ignore_ascii_case("unclassified b2b entity"))
+        .collect::<BTreeSet<_>>()
+        .into_iter()
         .collect::<Vec<_>>();
 
     if industries.is_empty() {
@@ -1578,11 +1592,7 @@ fn meta_description(profile: &CompanyProfile) -> String {
         .as_deref()
         .map(clean_public_text)
         .unwrap_or_default();
-    if !description.is_empty()
-        && !description
-            .to_ascii_lowercase()
-            .contains("still requires official website")
-    {
+    if should_use_profile_description(profile, &description) {
         return truncate_text(&description);
     }
 
@@ -1608,6 +1618,22 @@ fn meta_description(profile: &CompanyProfile) -> String {
         lei.map(|value| format!(" LEI: {value}.")).unwrap_or_default()
     );
     truncate_text(&fallback)
+}
+
+fn should_use_profile_description(profile: &CompanyProfile, description: &str) -> bool {
+    if description.is_empty()
+        || description
+            .to_ascii_lowercase()
+            .contains("still requires official website")
+    {
+        return false;
+    }
+    !matches!(
+        profile.source_name.as_str(),
+        "Norway Bronnoysund Register Centre API"
+            | "Estonia e-Business Register Open Data"
+            | "Finland PRH YTJ Open Data API"
+    )
 }
 
 fn truncate_text(value: &str) -> String {
@@ -1638,6 +1664,12 @@ fn is_displayable_profile(profile: &CompanyProfile) -> bool {
     ) {
         return false;
     }
+    if looks_like_estonia_person_listing(profile) {
+        return false;
+    }
+    if is_low_quality_display_name(profile) {
+        return false;
+    }
     display_company_name(profile)
         .chars()
         .filter(|ch| ch.is_alphanumeric())
@@ -1653,6 +1685,59 @@ fn profile_robots(profile: &CompanyProfile) -> &'static str {
     }
 }
 
+fn looks_like_estonia_person_listing(profile: &CompanyProfile) -> bool {
+    if profile.country.as_deref() != Some("Estonia")
+        || profile.source_name != "Estonia e-Business Register Open Data"
+    {
+        return false;
+    }
+    let name = display_company_name(profile);
+    let upper = name.to_uppercase();
+    let business_markers = [
+        " OÜ",
+        " OU",
+        " AS",
+        " MTÜ",
+        " TÜ",
+        " UÜ",
+        " SA",
+        " FIE",
+        "ÜHISTU",
+        "OSAÜHING",
+        "AKTSIASELTS",
+        "TULUNDUSÜHISTU",
+        "SIHTASUTUS",
+    ];
+    !business_markers
+        .iter()
+        .any(|marker| upper.contains(marker) || upper.ends_with(marker.trim()))
+}
+
+fn is_low_quality_display_name(profile: &CompanyProfile) -> bool {
+    let name = display_company_name(profile);
+    let normalized = name.trim().trim_matches('-').trim().to_ascii_lowercase();
+    let compact = normalized
+        .chars()
+        .filter(|ch| ch.is_alphanumeric())
+        .collect::<String>();
+    let letters = normalized.chars().filter(|ch| ch.is_alphabetic()).count();
+    let country = profile
+        .country
+        .as_deref()
+        .map(clean_public_text)
+        .unwrap_or_default()
+        .to_ascii_lowercase();
+    normalized.is_empty()
+        || normalized == country
+        || compact == country
+        || compact.chars().all(|ch| ch.is_ascii_digit())
+        || letters < 2
+        || matches!(
+            normalized.as_str(),
+            "company" | "exporter" | "manufacturer" | "supplier"
+        )
+}
+
 fn organization_json_ld(profile: &CompanyProfile, canonical: &str) -> String {
     #[derive(Serialize)]
     struct OrganizationJsonLd<'a> {
@@ -1666,7 +1751,7 @@ fn organization_json_ld(profile: &CompanyProfile, canonical: &str) -> String {
         description: String,
         url: String,
         #[serde(skip_serializing_if = "Vec::is_empty")]
-        address: Vec<&'a String>,
+        address: Vec<String>,
         #[serde(skip_serializing_if = "Vec::is_empty")]
         same_as: Vec<&'a String>,
         #[serde(skip_serializing_if = "Option::is_none")]
@@ -1699,11 +1784,17 @@ fn organization_json_ld(profile: &CompanyProfile, canonical: &str) -> String {
         description: meta_description(profile),
         url: profile
             .canonical_domain
-            .clone()
+            .as_deref()
+            .map(percent_encode_href)
             .unwrap_or_else(|| canonical.to_string()),
-        address: profile.addresses.iter().collect(),
+        address: profile
+            .addresses
+            .iter()
+            .map(|value| clean_public_text(value))
+            .filter(|value| !value.is_empty())
+            .collect(),
         same_as: profile.contacts.social_links.iter().collect(),
-        image: first_image_url(profile),
+        image: first_image_url(profile).map(|url| percent_encode_href(&url)),
         identifier,
     };
     serde_json::to_string(&data).unwrap_or_else(|_| "{}".to_string())
@@ -1750,13 +1841,45 @@ fn html_attr(value: &str) -> String {
     html(value).replace('"', "&quot;")
 }
 
+fn href_attr(value: &str) -> String {
+    html_attr(&percent_encode_href(value))
+}
+
+fn percent_encode_href(value: &str) -> String {
+    let mut out = String::new();
+    for ch in value.chars() {
+        if ch.is_ascii() && !ch.is_ascii_control() && !ch.is_whitespace() {
+            out.push(ch);
+        } else {
+            let mut bytes = [0_u8; 4];
+            for byte in ch.encode_utf8(&mut bytes).as_bytes() {
+                let _ = write!(out, "%{byte:02X}");
+            }
+        }
+    }
+    out
+}
+
 fn clean_public_text(value: &str) -> String {
-    let without_entities = value.replace("&quot;", "").replace("&#34;", "");
+    let without_entities =
+        translate_public_terms(&value.replace("&quot;", "").replace("&#34;", ""));
     let mut out = String::new();
     let mut last_space = false;
 
     for ch in without_entities.chars() {
         if ch == '"' {
+            continue;
+        }
+        if let Some(digit) = arabic_digit_to_ascii(ch) {
+            out.push(digit);
+            last_space = false;
+            continue;
+        }
+        if is_arabic_char(ch) {
+            if !last_space && !out.is_empty() {
+                out.push(' ');
+                last_space = true;
+            }
             continue;
         }
         if ch.is_whitespace() {
@@ -1770,7 +1893,7 @@ fn clean_public_text(value: &str) -> String {
         last_space = false;
     }
 
-    let mut cleaned = out
+    let mut cleaned = remove_empty_parentheses(&out)
         .trim()
         .trim_matches(|ch| {
             matches!(
@@ -1780,6 +1903,7 @@ fn clean_public_text(value: &str) -> String {
         })
         .to_string();
     for (from, to) in [
+        ("()", ""),
         (" ,", ","),
         (" .", "."),
         (" ;", ";"),
@@ -1794,11 +1918,294 @@ fn clean_public_text(value: &str) -> String {
         cleaned = cleaned.replace("  ", " ");
     }
 
-    if cleaned.is_empty() {
-        value.trim().to_string()
-    } else {
-        cleaned
+    cleaned.trim().to_string()
+}
+
+fn remove_empty_parentheses(value: &str) -> String {
+    let mut chars = value.chars().peekable();
+    let mut out = String::new();
+
+    while let Some(ch) = chars.next() {
+        if ch != '(' {
+            out.push(ch);
+            continue;
+        }
+
+        let mut inner = String::new();
+        let mut closed = false;
+        for next in chars.by_ref() {
+            if next == ')' {
+                closed = true;
+                break;
+            }
+            inner.push(next);
+        }
+
+        if closed && inner.chars().all(|inner_ch| !inner_ch.is_alphanumeric()) {
+            if !out.ends_with(' ') && !out.is_empty() {
+                out.push(' ');
+            }
+            continue;
+        }
+
+        out.push('(');
+        out.push_str(&inner);
+        if closed {
+            out.push(')');
+        }
     }
+
+    out
+}
+
+fn normalize_public_digits(value: &str) -> String {
+    value
+        .chars()
+        .map(|ch| arabic_digit_to_ascii(ch).unwrap_or(ch))
+        .collect()
+}
+
+fn arabic_digit_to_ascii(ch: char) -> Option<char> {
+    match ch {
+        '\u{0660}' | '\u{06F0}' => Some('0'),
+        '\u{0661}' | '\u{06F1}' => Some('1'),
+        '\u{0662}' | '\u{06F2}' => Some('2'),
+        '\u{0663}' | '\u{06F3}' => Some('3'),
+        '\u{0664}' | '\u{06F4}' => Some('4'),
+        '\u{0665}' | '\u{06F5}' => Some('5'),
+        '\u{0666}' | '\u{06F6}' => Some('6'),
+        '\u{0667}' | '\u{06F7}' => Some('7'),
+        '\u{0668}' | '\u{06F8}' => Some('8'),
+        '\u{0669}' | '\u{06F9}' => Some('9'),
+        _ => None,
+    }
+}
+
+fn translate_public_terms(value: &str) -> String {
+    let mut out = value.to_string();
+    for (from, to) in [
+        ("الطباعة والتغليف والورق", "Printing, Packaging & Paper"),
+        ("الصناعات الكيماوية والأسمدة", "Chemicals & Fertilizers"),
+        ("الإلكترونيات والكهربائيات", "Electronics & Electrical"),
+        ("الصناعات الهندسية", "Engineering Industries"),
+        ("الحاصلات الزراعية", "Agricultural Products"),
+        ("الصناعات الغذائية", "Food & Beverage"),
+        ("الصناعات الطبية", "Medical Industries"),
+        ("الملابس الجاهزة", "Apparel"),
+        ("الغزل والمنسوجات", "Textiles"),
+        ("مواد البناء", "Construction Materials"),
+        ("جلود واحذية", "Leather & Footwear"),
+        ("الكتب والمصنفات الفنية", "Books & Creative Works"),
+        ("الصناعات اليدوية", "Handicrafts"),
+        ("المفروشات", "Home Textiles"),
+        ("الأثاث", "Furniture"),
+        ("محافظة القاهرة", "Cairo Governorate"),
+        ("محافظة الجيزة", "Giza Governorate"),
+        ("محافظة الإسكندرية", "Alexandria Governorate"),
+        ("محافظة الاسكندرية", "Alexandria Governorate"),
+        ("محافظة البحيرة", "Beheira Governorate"),
+        ("محافظة الشرقية", "Sharqia Governorate"),
+        ("محافظة الدقهلية", "Dakahlia Governorate"),
+        ("محافظة دمياط", "Damietta Governorate"),
+        ("محافظة المنوفية", "Monufia Governorate"),
+        ("محافظة الغربية", "Gharbia Governorate"),
+        ("محافظة القليوبية", "Qalyubia Governorate"),
+        ("محافظة كفر الشيخ", "Kafr El Sheikh Governorate"),
+        ("محافظة المنيا", "Minya Governorate"),
+        ("محافظة أسيوط", "Assiut Governorate"),
+        ("محافظة اسيوط", "Assiut Governorate"),
+        ("محافظة سوهاج", "Sohag Governorate"),
+        ("محافظة قنا", "Qena Governorate"),
+        ("محافظة الأقصر", "Luxor Governorate"),
+        ("محافظة الاقصر", "Luxor Governorate"),
+        ("محافظة أسوان", "Aswan Governorate"),
+        ("محافظة اسوان", "Aswan Governorate"),
+        ("محافظة بورسعيد", "Port Said Governorate"),
+        ("محافظة السويس", "Suez Governorate"),
+        ("محافظة الإسماعيلية", "Ismailia Governorate"),
+        ("محافظة الاسماعيلية", "Ismailia Governorate"),
+        ("محافظة شمال سيناء", "North Sinai Governorate"),
+        ("محافظة جنوب سيناء", "South Sinai Governorate"),
+        ("محافظة البحر الأحمر", "Red Sea Governorate"),
+        ("محافظة البحر الاحمر", "Red Sea Governorate"),
+        ("محافظة الوادي الجديد", "New Valley Governorate"),
+        ("محافظة مطروح", "Matrouh Governorate"),
+        ("محافظة بني سويف", "Beni Suef Governorate"),
+        ("محافظة الفيوم", "Fayoum Governorate"),
+        ("العاشر من رمضان", "10th of Ramadan City"),
+        ("القاهرة الجديدة", "New Cairo"),
+        ("التجمع الثالث", "Third Settlement"),
+        ("المنطقة الصناعية", "Industrial Zone"),
+        ("مدينه", "City"),
+        ("مدينة", "City"),
+        ("مصر", "Egypt"),
+    ] {
+        out = out.replace(from, to);
+    }
+    out
+}
+
+fn is_arabic_char(ch: char) -> bool {
+    ('\u{0600}'..='\u{06FF}').contains(&ch)
+        || ('\u{0750}'..='\u{077F}').contains(&ch)
+        || ('\u{08A0}'..='\u{08FF}').contains(&ch)
+        || ('\u{FB50}'..='\u{FDFF}').contains(&ch)
+        || ('\u{FE70}'..='\u{FEFF}').contains(&ch)
+}
+
+fn public_industry_label(value: &str) -> Option<String> {
+    let cleaned = clean_public_text(value);
+    if cleaned.is_empty() || cleaned.eq_ignore_ascii_case("unclassified b2b entity") {
+        return None;
+    }
+    let lower = cleaned.to_lowercase();
+    for (label, hints) in [
+        (
+            "Food & Beverage",
+            &[
+                "food",
+                "beverage",
+                "agricultural products",
+                "elintarvik",
+                "juom",
+                "kjøtt",
+                "frukt",
+                "grønnsaker",
+                "kaffe",
+                "catering",
+            ][..],
+        ),
+        (
+            "Agriculture",
+            &[
+                "agriculture",
+                "agricultural",
+                "dyrking",
+                "maatalous",
+                "jordbruk",
+            ][..],
+        ),
+        (
+            "Construction Materials",
+            &[
+                "construction",
+                "building",
+                "byggevarer",
+                "bygging",
+                "glass",
+                "kalkstein",
+                "gips",
+                "skifer",
+            ][..],
+        ),
+        (
+            "Chemicals",
+            &[
+                "chemical",
+                "chemicals",
+                "kjemikal",
+                "adhesive",
+                "paint",
+                "fertilizer",
+            ][..],
+        ),
+        (
+            "Textiles & Apparel",
+            &[
+                "textile", "textiles", "apparel", "clothing", "klær", "tekstil", "vaat", "skotøy",
+                "leather",
+            ][..],
+        ),
+        (
+            "Industrial Equipment",
+            &[
+                "machinery",
+                "equipment",
+                "engineering",
+                "maskin",
+                "produksjonsutstyr",
+                "metaller",
+                "teknisk",
+            ][..],
+        ),
+        (
+            "Packaging",
+            &["packaging", "printing", "paper", "emball", "pakk"][..],
+        ),
+        (
+            "Electronics",
+            &[
+                "electronics",
+                "electronic",
+                "electrical",
+                "elektron",
+                "sähkö",
+                "cable",
+            ][..],
+        ),
+        (
+            "Automotive",
+            &["automotive", "vehicle", "motor", "ajoneuv", "auto"][..],
+        ),
+        (
+            "Logistics & Distribution",
+            &[
+                "logistics",
+                "transport",
+                "freight",
+                "cargo",
+                "shipping",
+                "warehouse",
+                "sjøtransport",
+                "lufttransport",
+            ][..],
+        ),
+        (
+            "Healthcare Supply",
+            &[
+                "medical",
+                "healthcare",
+                "pharma",
+                "veterinary",
+                "lääkint",
+                "medisin",
+            ][..],
+        ),
+        (
+            "Energy",
+            &["energy", "oil", "gas", "petroleum", "brensel", "drivstoff"][..],
+        ),
+        ("Furniture", &["furniture", "møbler", "huonekalu"][..]),
+        (
+            "Wholesale & Distribution",
+            &["wholesale", "tukkukauppa", "engroshandel", "agenturhandel"][..],
+        ),
+        (
+            "Manufacturing",
+            &[
+                "manufacture",
+                "manufacturing",
+                "valmistus",
+                "bearbeiding",
+                "industriproduksjon",
+            ][..],
+        ),
+        (
+            "Business Services",
+            &[
+                "consulting",
+                "rådgivning",
+                "asianajo",
+                "administrativ",
+                "dataprogrammering",
+            ][..],
+        ),
+    ] {
+        if hints.iter().any(|hint| lower.contains(hint)) {
+            return Some(label.to_string());
+        }
+    }
+    Some("Industry classification".to_string())
 }
 
 fn url_component(value: &str) -> String {
@@ -1820,8 +2227,8 @@ fn linked_text(value: &str) -> String {
     if value.starts_with("https://") || value.starts_with("http://") {
         format!(
             "<a href=\"{}\" rel=\"nofollow noopener\">{}</a>",
-            html_attr(value),
-            html(value)
+            href_attr(value),
+            html(&percent_encode_href(value))
         )
     } else {
         html(value)

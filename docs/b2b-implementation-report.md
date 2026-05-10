@@ -2,6 +2,53 @@
 
 Date: 2026-05-05
 
+## 2026-05-10 English Public Directory And Country Expansion
+
+Implemented the latest SaharaIndex public-directory cleanup and deployment pass:
+
+- Forced generated public pages to English-only presentation for the directory UI, filter labels, industry labels, country pages, profile descriptions, cards, JSON-LD, and static search records.
+- Added Arabic-to-English public term mappings for ExpoEgypt sectors and Egyptian governorates/city terms, then stripped any remaining Arabic script from generated public text.
+- Normalized Arabic-Indic digits in public company phone fields to Western digits.
+- Percent-encoded non-ASCII profile, website, and image URLs so raw Arabic does not leak into HTML attributes or static search JSON.
+- Added product category, industry, country, contact-method, source, and company-type filters to the generated directory index.
+- Kept only company-level public contact signals for buyer RFQ use: corporate website, role/generic email, switchboard phone, address, public products, and public catalog images where exposed by the source.
+- Added display guards for low-quality company names and Estonia person-like registry records so the public site favors company profiles.
+- Added an Estonia ingest guard that only accepts records with recognizable business/legal markers such as `OÜ`, `AS`, `MTÜ`, `FIE`, and related legal forms.
+
+Country expansion executed during this pass:
+
+```text
+Norway Bronnoysund official API: approximately 500 additional official profiles appended before the combined Finland request stalled.
+France Sirene / Annuaire des Entreprises API: 500 additional official profiles appended.
+Estonia e-Business Register open data: 300 additional company-level profiles appended after filtering out 52,236 person-like records.
+Finland PRH/YTJ API: deferred from this deployment because the request stalled at socket level during the combined run.
+```
+
+Final generated/deployed website state:
+
+```text
+Public directory URL: https://saharaindex.com/companies/
+Egypt country page URL: https://saharaindex.com/companies/country-egypt.html
+Exported public profiles: 125,509
+Egypt public profiles: 2,163
+Generated HTML files under companies/: 126,292
+Generated static site size: 1.6 GB
+Arabic-character scan across generated site: 0 files
+```
+
+Verification and deployment commands used:
+
+```bash
+python3 tools/b2b_official_source_ingest.py --out data/b2b --sources france --limit 500 --page-size 25 --delay 0.05
+python3 tools/b2b_official_source_ingest.py --out data/b2b --sources estonia --limit 300 --page-size 5 --delay 0.05
+cargo build --release -p obscura-b2b
+OBSCURA_B2B_SKIP_COMPANY_JSON=1 OBSCURA_B2B_SITE_BASE_URL=https://saharaindex.com OBSCURA_B2B_RFQ_API_URL=https://api.saharaindex.com/api/rfqs ./target/release/obscura-b2b export --out data/b2b
+rg -l "[\x{0600}-\x{06FF}]" data/b2b/site
+rsync -a --delete data/b2b/site/ /srv/sahara-b2b-directory/
+curl -I https://saharaindex.com/companies/
+curl -I https://saharaindex.com/companies/country-egypt.html
+```
+
 ## Repository Access
 
 The prompt referenced `https://github.com/h4ckf4r0day/obscura`, which was not cloneable from this environment. The public repository that resolved successfully is:
